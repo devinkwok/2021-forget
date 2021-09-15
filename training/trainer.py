@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 from torch import nn, optim
 from torchvision import datasets, transforms, utils
 from torch.utils.data import random_split, DataLoader
@@ -91,7 +92,7 @@ class train:
             batch_acc = list()
 
             model.train()
-            for batch in self.dataloader:
+            for iter, batch in enumerate(self.dataloader):
                 x,y = batch
                 x=x.cuda()
                 logits = model(x)
@@ -104,8 +105,11 @@ class train:
                 J.backward()
                 self.optimizer.step()
 
-                batch_loss.append(J.item())
-                batch_acc.append(y.eq(logits.detach().argmax(dim=1).cpu()).float().mean())
+                loss = J.item()
+                acc = y.eq(logits.detach().argmax(dim=1).cpu()).float().mean()
+                print(f'Ep{epoch} it{iter} l={loss} a={acc}')
+                batch_loss.append(loss)
+                batch_acc.append(acc)
 
                 # metrics: generate per-iteration metrics (top_k classes and probabilities)
                 top_k_outputs = [metrics.top_k(x, y)
@@ -161,15 +165,18 @@ class train:
         model.train()
 
     def save_model_data(self, model, epoch, loss, accuracy):
+        save_location = self.store_directory + "epoch=" + str(epoch+1) + ".pt"
+        print(f'Saving checkpoint to {save_location}')
         torch.save({
            'epoch': epoch+1,
            'model_state_dict': model.state_dict(),
            'optimizer_state_dict': self.optimizer.state_dict(),
            'loss': loss,
            'train accuracy': accuracy,
-           }, self.store_directory + "epoch=" + str(epoch+1) + ".pt")
+           }, save_location)
         
     def save_data(self):
+        print(f'Saving data to {self.store_directory}')
         if self.forget_flag:
             self.forget_msrmt.saveForget(self.store_directory)
         if self.track_correct_ex:
