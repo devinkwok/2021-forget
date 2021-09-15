@@ -185,8 +185,8 @@ class train:
         #to add: save accuracies
 
         # metrics: save per-iteration classes and probabilities
-        torch.save(self.top_k_class, self.store_directory + "metrics/" + "top_k_class.pt")
-        torch.save(self.top_k_score, self.store_directory + "metrics/" + "top_k_score.pt")
+        torch.save(self.top_k_class, self.store_directory + "top_k_class.pt")
+        torch.save(self.top_k_score, self.store_directory + "top_k_score.pt")
 
     def clean(self, model):
         del model
