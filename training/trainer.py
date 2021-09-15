@@ -110,7 +110,7 @@ class train:
                 # metrics: generate per-iteration metrics (top_k classes and probabilities)
                 top_k_outputs = [metrics.top_k(x, y)
                     for x, y in self.evaluate_model(
-                        model, self.eval_dataloader, return_probabilities=True)]
+                        model, self.eval_dataloader, return_probabilities=True, as_numpy=True)]
                 # invert nesting order of list from [[class_1, score_1], [class_2, score_2], ...]
                 # to [[class_1, class_2, ...], [score_1, score_2, ...]], then combine into ndarray
                 top_k_class, top_k_score = [np.concatenate(x, axis=0) for x in zip(*top_k_outputs)]
@@ -155,8 +155,8 @@ class train:
             output = output.detach()
             y = y.detach()
             if as_numpy:
-                output = output.numpy()
-                y = y.numpy()
+                output = output.cpu().numpy()
+                y = y.cpu().numpy()
             yield output, y
         model.train()
 

@@ -11,7 +11,7 @@ module load python/3.7/cuda/10.1/cudnn/8.0/pytorch/1.6.0
 virtualenv $SLURM_TMPDIR/env/
 source $SLURM_TMPDIR/env/bin/activate
 pip install --upgrade pip
-pip install -r requirements.txt
+pip install -r Forget/requirements.txt
 
 python $HOME/proj/forget/Forget/main/run.py
 
