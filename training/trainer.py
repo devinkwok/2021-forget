@@ -144,7 +144,7 @@ class train:
         model.eval()
         self.clean(model)
 
-    def evaluate_model(model, dataloader, return_probabilities=False, as_numpy=False):
+    def evaluate_model(self, model, dataloader, return_probabilities=False, as_numpy=False):
         model.eval()
         for x, y in dataloader:
             x = x.cuda()
