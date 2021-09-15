@@ -76,6 +76,7 @@ class train:
                 )])
             )
             return DataLoader(dataset, batch_size=batch_size, num_workers=0)
+        raise ValueError(f'Dataset {dataset_name} not found.')
 
     def trainLoop(self, model):
         losses = list()
