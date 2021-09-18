@@ -1,10 +1,9 @@
-import sys
-from pathlib import Path
-import configparser
-from Forget.config import parser
-import numpy
-from Forget.training import trainer
 import os
+import sys
+import datetime
+import numpy as np
+from Forget.config import parser
+from Forget.training import trainer
 from Forget.datasets import createforgetdataset
 from Forget.damage import damagemodel
 from Forget.postprocess import postprocess
@@ -35,10 +34,10 @@ class run_experiment:
 
         #number of models to train per job
         if self.num_models % self.num_jobs == 0:
-            self.num_train_per_job = numpy.full(self.num_jobs, self.num_models/self.num_jobs).astype(int)
+            self.num_train_per_job = np.full(self.num_jobs, self.num_models/self.num_jobs).astype(int)
         else:
-            self.num_train_per_job = numpy.full(self.num_jobs - 1, int(self.num_models/self.num_jobs)).astype(int)
-            self.num_train_per_job = numpy.append(self.num_train_per_job, int(self.num_models % self.num_jobs)) #check this
+            self.num_train_per_job = np.full(self.num_jobs - 1, int(self.num_models/self.num_jobs)).astype(int)
+            self.num_train_per_job = np.append(self.num_train_per_job, int(self.num_models % self.num_jobs)) #check this
 
         #make output directories
         self.reader.mk_directories(self.num_train_per_job)
@@ -51,17 +50,12 @@ class run_experiment:
         print(f"Starting training...")
         #training step:
         #and for each job, pass models onto trainer
-        job_idx = 0
-        model_idx = 0
-        for job in self.reader.jobs:
-            print(f"{job}: {self.reader.jobs[job]}")
-            for model_no in range(self.num_train_per_job[job_idx]):
+        for job_idx, job in enumerate(self.reader.jobs):
+            for model_idx in range(self.num_train_per_job[job_idx]):
+                print(f"{job}: {self.reader.jobs[job]}, m={model_idx}, t={datetime.datetime.now()}")
                 model = self.reader.get_model(job)
                 model_trainer = trainer.train(model, self.reader.exp_info, self.reader.jobs[job], job_idx, model_idx)
                 model_trainer.trainLoop(model)
-                model_idx+=1
-            model_idx=0
-            job_idx+=1
         
         """
         PROCESS STEP

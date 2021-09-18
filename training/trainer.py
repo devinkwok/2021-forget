@@ -1,3 +1,5 @@
+import os
+import time
 import torch
 import numpy as np
 from torch import nn, optim
@@ -6,7 +8,6 @@ from torch.utils.data import random_split, DataLoader
 from pathlib import Path
 from Forget.training  import measureforget
 from Forget.training  import metrics
-import os
 
 class train:
     def __init__(self, model, exp_info, job_info, job_idx, model_idx): #job_idx, model_idx should be a unique modifier that indexes the job, model
@@ -93,8 +94,10 @@ class train:
 
             model.train()
             for iter, batch in enumerate(self.dataloader):
-                x,y = batch
-                x=x.cuda()
+                t_start = time.perf_counter()
+
+                x, y = batch
+                x = x.cuda()
                 logits = model(x)
 
                 if self.forget_flag: #eventually should change forget class to have wrapper instead of these flags.
@@ -107,9 +110,9 @@ class train:
 
                 loss = J.item()
                 acc = y.eq(logits.detach().argmax(dim=1).cpu()).float().mean()
-                print(f'Ep{epoch} it{iter} l={loss} a={acc}')
                 batch_loss.append(loss)
                 batch_acc.append(acc)
+                t_train = time.perf_counter()
 
                 # metrics: generate per-iteration metrics (top_k classes and probabilities)
                 top_k_outputs = [metrics.top_k(x, y)
@@ -120,6 +123,8 @@ class train:
                 top_k_class, top_k_score = [np.concatenate(x, axis=0) for x in zip(*top_k_outputs)]
                 self.top_k_class.append(top_k_class)
                 self.top_k_score.append(top_k_score)
+                t_metrics = time.perf_counter()
+                print(f'Ep{epoch} it{iter} l={loss} a={acc} ttime={t_train - t_start} mtime={t_metrics - t_train}')
 
                 if self.forget_flag:
                     self.forget_msrmt.incrementTrainBatch()
@@ -185,8 +190,8 @@ class train:
         #to add: save accuracies
 
         # metrics: save per-iteration classes and probabilities
-        torch.save(self.top_k_class, self.store_directory + "top_k_class.pt")
-        torch.save(self.top_k_score, self.store_directory + "top_k_score.pt")
+        torch.save(self.top_k_class, os.path.join(self.store_directory, "top_k_class.pt"))
+        torch.save(self.top_k_score, os.path.join(self.store_directory, "top_k_score.pt"))
 
     def clean(self, model):
         del model
