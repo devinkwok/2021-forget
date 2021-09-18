@@ -42,7 +42,9 @@ class train:
         else:
             pass #to add, custom dataset batch size, num workers, etc.
         
-        self.dataloader = self.getDataset(job_info["dataset"], self.batch_size, train=True)
+        self.dataloader = self.get_dataloader(
+            self.get_dataset(job_info["dataset"], train=True),
+            self.batch_size)
 
         if job_info["measure forget"] == "true" or job_info["measure forget"] == "True":
             self.forget_flag = True
@@ -61,12 +63,18 @@ class train:
         #self.trainLoop(model) #train the model
 
         # metrics: initialize storage
-        self.top_k_class, self.top_k_score = [], []
-        # metrics: create eval dataset (TODO: for now, just put all test examples)
-        self.eval_dataloader = self.getDataset(job_info["dataset"], self.batch_size * 8, train=False)
+        self.self.eval_logits = []
+        # metrics: create eval dataset
+        self.eval_dataloader = self.get_eval_dataloader(job_info["dataset"])
 
-    def getDataset(self, dataset_name, batch_size, train=True): #option to change batch size?
-        print(f"Loading train dataset {dataset_name}... batch size {batch_size}")
+    def get_eval_dataloader(self, dataset_name):
+        train_dataset = self.get_dataset(dataset_name, train=True, max_idx=10000)
+        test_dataset = self.get_dataset(dataset_name, train=False)
+        return self.get_dataloader(
+            torch.utils.data.ChainDataset(train_dataset, test_dataset),
+            batch_size=2500)
+
+    def get_dataset(self, dataset_name, train=True, max_idx=-1):
         if dataset_name == 'CIFAR10':
             dataset = datasets.CIFAR10(
                 os.getcwd(),  #TODO use localscratch location
@@ -77,8 +85,14 @@ class train:
                     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
                 )])
             )
-            return DataLoader(dataset, batch_size=batch_size, num_workers=0)
-        raise ValueError(f'Dataset {dataset_name} not found.')
+        else:
+            raise ValueError(f'Dataset {dataset_name} not found.')
+        if max_idx > 0:  # truncate dataset to max_idx
+            return torch.utils.data.Subset(dataset, np.arange(max_idx))
+        return dataset
+
+    def get_dataloader(self, dataset, batch_size: int):
+        return DataLoader(dataset, batch_size=batch_size, num_workers=0)
 
     def trainLoop(self, model):
         losses = list()
@@ -114,15 +128,10 @@ class train:
                 batch_acc.append(acc)
                 t_train = time.perf_counter()
 
-                # metrics: generate per-iteration metrics (top_k classes and probabilities)
-                top_k_outputs = [metrics.top_k(x, y)
-                    for x, y in self.evaluate_model(
-                        model, self.eval_dataloader, return_probabilities=True, as_numpy=True)]
-                # invert nesting order of list from [[class_1, score_1], [class_2, score_2], ...]
-                # to [[class_1, class_2, ...], [score_1, score_2, ...]], then combine into ndarray
-                top_k_class, top_k_score = [np.concatenate(x, axis=0) for x in zip(*top_k_outputs)]
-                self.top_k_class.append(top_k_class)
-                self.top_k_score.append(top_k_score)
+                # metrics: output logits for all examples in eval dataset
+                self.self.eval_logits = torch.cat(
+                    [x for x, _ in self.evaluate_model(model, self.eval_dataloader)],
+                    dim=0)
                 t_metrics = time.perf_counter()
                 print(f'Ep{epoch} it{iter} l={loss} a={acc} ttime={t_train - t_start} mtime={t_metrics - t_train}')
 
@@ -141,7 +150,7 @@ class train:
 
             if (epoch+1) % self.save_every == 0:
                 self.save_model_data(model, epoch+1, torch.tensor(batch_loss).mean(), torch.tensor(batch_acc).mean())
-                self.save_data()
+                self.save_data(epoch+1)
             
             accuracies.append(torch.tensor(batch_acc).mean())
             if self.forget_flag:
@@ -180,7 +189,7 @@ class train:
            'train accuracy': accuracy,
            }, save_location)
         
-    def save_data(self):
+    def save_data(self, epoch: int):
         print(f'Saving data to {self.store_directory}')
         if self.forget_flag:
             self.forget_msrmt.saveForget(self.store_directory)
@@ -189,9 +198,10 @@ class train:
 
         #to add: save accuracies
 
-        # metrics: save per-iteration classes and probabilities
-        torch.save(self.top_k_class, os.path.join(self.store_directory, "top_k_class.pt"))
-        torch.save(self.top_k_score, os.path.join(self.store_directory, "top_k_score.pt"))
+        # metrics: save per-iteration probabilities
+        torch.save(np.stack(self.self.eval_logits, axis=1),
+            os.path.join(self.store_directory, f"eval_logits={epoch}.pt"))
+        self.self.eval_logits = []  # clear memory
 
     def clean(self, model):
         del model

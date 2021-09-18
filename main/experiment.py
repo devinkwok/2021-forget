@@ -60,10 +60,10 @@ class run_experiment:
         """
         PROCESS STEP
         """
-        print(f"Now processing output...")
-        crtForget = createforgetdataset.createForgetDataset()
+        # print(f"Now processing output...")
+        # crtForget = createforgetdataset.createForgetDataset()
 
-        dmg = damagemodel.damageModel()
+        # dmg = damagemodel.damageModel()
 
-        procs = postprocess.postProcess()
+        # procs = postprocess.postProcess()
 
