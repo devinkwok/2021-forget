@@ -68,8 +68,8 @@ class train:
         self.eval_dataloader = self.get_eval_dataloader(job_info["dataset"])
 
     def get_eval_dataloader(self, dataset_name):
-        train_dataset = self.get_dataset(dataset_name, train=True, max_idx=10000)
-        test_dataset = self.get_dataset(dataset_name, train=False)
+        train_dataset = self.get_dataset(dataset_name, train=True, max_idx=5000)
+        test_dataset = self.get_dataset(dataset_name, train=False, max_idx=5000)
         return self.get_dataloader(
             torch.utils.data.ConcatDataset([train_dataset, test_dataset]),
             batch_size=2500)
