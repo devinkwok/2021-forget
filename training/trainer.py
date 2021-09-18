@@ -71,7 +71,7 @@ class train:
         train_dataset = self.get_dataset(dataset_name, train=True, max_idx=10000)
         test_dataset = self.get_dataset(dataset_name, train=False)
         return self.get_dataloader(
-            torch.utils.data.ChainDataset(train_dataset, test_dataset),
+            torch.utils.data.ConcatDataset([train_dataset, test_dataset]),
             batch_size=2500)
 
     def get_dataset(self, dataset_name, train=True, max_idx=-1):
@@ -129,9 +129,9 @@ class train:
                 t_train = time.perf_counter()
 
                 # metrics: output logits for all examples in eval dataset
-                self.eval_logits = torch.cat(
-                    [x for x, _ in self.evaluate_model(model, self.eval_dataloader)],
-                    dim=0)
+                self.eval_logits.append(torch.cat(
+                    [x.cpu() for x, _ in self.evaluate_model(model, self.eval_dataloader)],
+                    dim=0))
                 t_metrics = time.perf_counter()
                 print(f'Ep{epoch} it{iter} l={loss} a={acc} ttime={t_train - t_start} mtime={t_metrics - t_train}')
 
@@ -162,20 +162,13 @@ class train:
         model.eval()
         self.clean(model)
 
-    def evaluate_model(self, model, dataloader, return_probabilities=False, as_numpy=False):
+    def evaluate_model(self, model, dataloader):
         model.eval()
         for x, y in dataloader:
             x = x.cuda()
             with torch.no_grad():
                 output = model(x)
-                if return_probabilities:
-                    output = torch.softmax(output, dim=1)
-            output = output.detach()
-            y = y.detach()
-            if as_numpy:
-                output = output.cpu().numpy()
-                y = y.cpu().numpy()
-            yield output, y
+            yield output.detach(), y.detach()
         model.train()
 
     def save_model_data(self, model, epoch, loss, accuracy):
@@ -199,7 +192,7 @@ class train:
         #to add: save accuracies
 
         # metrics: save per-iteration probabilities
-        torch.save(np.stack(self.eval_logits, axis=1),
+        torch.save(torch.stack(self.eval_logits, axis=0),
             os.path.join(self.store_directory, f"eval_logits={epoch}.pt"))
         self.eval_logits = []  # clear memory
 
