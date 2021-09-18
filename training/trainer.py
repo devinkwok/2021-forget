@@ -63,7 +63,7 @@ class train:
         #self.trainLoop(model) #train the model
 
         # metrics: initialize storage
-        self.self.eval_logits = []
+        self.eval_logits = []
         # metrics: create eval dataset
         self.eval_dataloader = self.get_eval_dataloader(job_info["dataset"])
 
@@ -129,7 +129,7 @@ class train:
                 t_train = time.perf_counter()
 
                 # metrics: output logits for all examples in eval dataset
-                self.self.eval_logits = torch.cat(
+                self.eval_logits = torch.cat(
                     [x for x, _ in self.evaluate_model(model, self.eval_dataloader)],
                     dim=0)
                 t_metrics = time.perf_counter()
@@ -199,9 +199,9 @@ class train:
         #to add: save accuracies
 
         # metrics: save per-iteration probabilities
-        torch.save(np.stack(self.self.eval_logits, axis=1),
+        torch.save(np.stack(self.eval_logits, axis=1),
             os.path.join(self.store_directory, f"eval_logits={epoch}.pt"))
-        self.self.eval_logits = []  # clear memory
+        self.eval_logits = []  # clear memory
 
     def clean(self, model):
         del model
