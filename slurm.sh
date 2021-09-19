@@ -3,8 +3,9 @@
 #SBATCH --cpus-per-task=2                     # Ask for 2 CPUs
 #SBATCH --gres=gpu:1                          # Ask for 1 GPU
 #SBATCH --mem=10G
-#SBATCH --time=12:00:00
-#SBATCH -o %j.out
+#SBATCH --time=30:00:00
+#SBATCH --output=forget-%j.out
+#SBATCH --error=forget-%j.err
 
 SRC_DIR=$HOME/proj/forget/Forget
 

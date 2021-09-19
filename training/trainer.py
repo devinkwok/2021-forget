@@ -172,10 +172,10 @@ class train:
         model.train()
 
     def save_model_data(self, model, epoch, loss, accuracy):
-        save_location = self.store_directory + "epoch=" + str(epoch+1) + ".pt"
+        save_location = self.store_directory + "epoch=" + str(epoch) + ".pt"
         print(f'Saving checkpoint to {save_location}')
         torch.save({
-           'epoch': epoch+1,
+           'epoch': epoch,
            'model_state_dict': model.state_dict(),
            'optimizer_state_dict': self.optimizer.state_dict(),
            'loss': loss,
