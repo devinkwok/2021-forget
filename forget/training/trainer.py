@@ -6,8 +6,7 @@ from torch import nn, optim
 from torchvision import datasets, transforms, utils
 from torch.utils.data import random_split, DataLoader
 from pathlib import Path
-from forget.training  import measureforget
-from forget.training  import metrics
+from forget.training import measureforget
 
 class train:
     def __init__(self, model, exp_info, job_info, job_idx, model_idx, data_dir): #job_idx, model_idx should be a unique modifier that indexes the job, model

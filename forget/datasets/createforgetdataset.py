@@ -10,7 +10,7 @@ import torch
 import os
 import sys
 #sys.path.append(str("/")) #this will need to be fixed later
-from forget.config import parser
+from forget.main import parser
 from forget.training import trainer
 import os
 from pathlib import Path

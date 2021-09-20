@@ -5,7 +5,7 @@ import sys
 from open_lth.foundations import hparams
 from open_lth.models import registry
 from pathlib import Path
-from forget.config import parser
+from forget.main import parser
 
 class damageModel:
     def __init__(self, config_file = os.getcwd()+"/Forget/config/default_config.ini"):

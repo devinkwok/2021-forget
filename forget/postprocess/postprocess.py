@@ -3,7 +3,7 @@ import os, os.path
 import sys
 from open_lth.foundations import hparams
 from open_lth.models import registry
-from forget.config import parser
+from forget.main import parser
 import numpy as np
 from torchvision import datasets, transforms, utils
 from torch.utils.data import random_split, DataLoader
