@@ -7,7 +7,7 @@
 #SBATCH --output=forget-%j.out
 #SBATCH --error=forget-%j.err
 
-SRC_DIR=$HOME/proj/forget
+SRC_DIR=$HOME/proj/2021-forget
 
 # load modulels
 module load python/3.7
@@ -22,9 +22,9 @@ pip install --upgrade pip
 pip install -r $SRC_DIR/requirements.txt
 
 # copy training data to node
-mkdir $SLURM_TMPDIR/datasets
-cp -r $HOME/datasets/cifar10.var/cifar10_torchvision $SLURM_TMPDIR/datasets/
+mkdir $SLURM_TMPDIR/data
+cp -r $HOME/datasets/cifar10.var/cifar10_torchvision/cifar-10-batches-py $SLURM_TMPDIR/data/
 
-python $SRC_DIR/run.py \
-    --config_file=$HOME/proj/2021-forget/forget/config/default_config.ini
-    --data_dir=$SLURM_TMPDIR/datasets \
+python $SRC_DIR/forget/main/run.py \
+    --config_file=$HOME/proj/2021-forget/forget/config/default_config.ini \
+    --data_dir=$SLURM_TMPDIR/data \
