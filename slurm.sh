@@ -25,6 +25,6 @@ pip install -r $SRC_DIR/requirements.txt
 mkdir $SLURM_TMPDIR/datasets
 cp -r $HOME/datasets/cifar10.var/cifar10_torchvision $SLURM_TMPDIR/datasets/
 
-python $SRC_DIR/experiment.py \
+python $SRC_DIR/run.py \
     --config_file=$HOME/proj/2021-forget/forget/config/default_config.ini
     --data_dir=$SLURM_TMPDIR/datasets \

@@ -10,12 +10,13 @@ from forget.training  import measureforget
 from forget.training  import metrics
 
 class train:
-    def __init__(self, model, exp_info, job_info, job_idx, model_idx): #job_idx, model_idx should be a unique modifier that indexes the job, model
+    def __init__(self, model, exp_info, job_info, job_idx, model_idx, data_dir): #job_idx, model_idx should be a unique modifier that indexes the job, model
         #structure of directory is eg ../jobs/job1/model1/
         #idx here would be '1'
 
         #list of datasets that trainer knows about
         parent_dir_path = Path(Path().absolute()).parent
+        self.data_dir = data_dir
 
         self.num_epochs = int(job_info["num epochs"])
         self.save_every = int(job_info["save every"])
@@ -76,9 +77,9 @@ class train:
     def get_dataset(self, dataset_name, train=True, max_idx=-1):
         if dataset_name == 'CIFAR10':
             dataset = datasets.CIFAR10(
-                os.getcwd(),  #TODO use localscratch location
+                self.data_dir,
                 train=train,
-                download=True,  #TODO change to False once localscratch is figured out
+                download=False,
                 transform=transforms.Compose([
                     transforms.ToTensor(),
                     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
