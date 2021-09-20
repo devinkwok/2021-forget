@@ -1,12 +1,13 @@
 import os
 import sys
 import datetime
+import argparse
 import numpy as np
-from Forget.config import parser
-from Forget.training import trainer
-from Forget.datasets import createforgetdataset
-from Forget.damage import damagemodel
-from Forget.postprocess import postprocess
+from forget import parser
+from forget.training import trainer
+from forget.datasets import createforgetdataset
+from forget.damage import damagemodel
+from forget.postprocess import postprocess
 
 
 class run_experiment:
@@ -16,8 +17,7 @@ class run_experiment:
     1. Pretraining (e.g. load model from OpenLTH)
     2. Training (for each job, pass models onto trainer.py which trains it and stores the data)
     """
-    
-    def __init__(self, config_file = "Forget/config/default_config.ini"):
+    def __init__(self, config_file, data_dir):
         parent_dir_path = os.path.dirname(str(os.path.dirname(os.path.realpath(__file__))))
         sys.path.append(os.getcwd()+"/Forget/open_lth/")
         #sys.path.append(str(parent_dir_path) + "/open_lth/")
@@ -67,3 +67,11 @@ class run_experiment:
 
         # procs = postprocess.postProcess()
 
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config_file', default="./config/default_config.ini", type=str)
+    parser.add_argument('--data_dir', default="./datasets/", type=str)
+    args = vars(parser.parse_args())
+
+    run_experiment(args['config_file'], args['data_dir'])

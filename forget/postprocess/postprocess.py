@@ -1,9 +1,9 @@
 import torch
 import os, os.path
 import sys
-from Forget.open_lth.foundations import hparams
-from Forget.open_lth.models import registry
-from Forget.config import parser
+from open_lth.foundations import hparams
+from open_lth.models import registry
+from forget.config import parser
 import numpy as np
 from torchvision import datasets, transforms, utils
 from torch.utils.data import random_split, DataLoader

@@ -33,7 +33,6 @@ class readConfig:
             elif str.split(section)[0] == "Job" and str.split(section)[1].isdigit():
                 self.jobs[section] = {}
                 options = config.options(section)
-                #change this to a loop
                 for i in range(len(options)):
                     self.jobs[section][str(options[i])] = config.get(section, options[i])
             else:
@@ -65,8 +64,8 @@ class readConfig:
         
         #model params
     def get_model(self, job):
-        from Forget.open_lth.foundations import hparams
-        from Forget.open_lth.models import registry
+        from open_lth.foundations import hparams
+        from open_lth.models import registry
 
         if self.jobs[job]["model parameters"] == "default":
             _model_params = hparams.ModelHparams(

@@ -6,8 +6,8 @@ from torch import nn, optim
 from torchvision import datasets, transforms, utils
 from torch.utils.data import random_split, DataLoader
 from pathlib import Path
-from Forget.training  import measureforget
-from Forget.training  import metrics
+from forget.training  import measureforget
+from forget.training  import metrics
 
 class train:
     def __init__(self, model, exp_info, job_info, job_idx, model_idx): #job_idx, model_idx should be a unique modifier that indexes the job, model
@@ -17,7 +17,6 @@ class train:
         #list of datasets that trainer knows about
         parent_dir_path = Path(Path().absolute()).parent
 
-        self.dataset_names = ['cifar10']
         self.num_epochs = int(job_info["num epochs"])
         self.save_every = int(job_info["save every"])
         if exp_info["storage directory"] == "default":
