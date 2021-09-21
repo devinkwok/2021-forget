@@ -23,7 +23,7 @@ def sample_and_eval_noisy_models(job):
         raise ValueError(f"config value 'noise type'={noise_type} is undefined")
 
     # load trained models and sample noise
-    models = load_models(job)
+    model_states = load_model_states(job)
     noises = [sample_noise(job)
             for _ in range(int(job.hparams['num noise samples']))]
 
@@ -33,18 +33,17 @@ def sample_and_eval_noisy_models(job):
     
     # save logits for sample/replicate
     for logits, m, n in eval_noisy_models(
-            job, examples, models, noises, combine_fn):
+            job, examples, model_states, noises, combine_fn):
         job.save_obj_to_subdir(
             logits, 'logits_noise_' + noise_type, f'logits-model{m}-noise{n}')
 
-def load_models(job):
-    models = []
+def load_model_states(job):
+    model_states = []
     ckpt_id = job.hparams['num epochs']
     for dir in job.replicate_dirs():
         model = torch.load(os.path.join(dir, f'epoch={ckpt_id}.pt'))
-        model.eval()
-        models.append(model)
-    return models
+        model_states.append(model['model_state_dict'])
+    return model_states
 
 def sample_gaussians(job):
     noise = job.get_model()
@@ -54,13 +53,14 @@ def sample_gaussians(job):
             param.normal_(mean=0, std=1.)
     return noise
 
-def apply_noise(job, model, noise, scale, combine_fn):
+def apply_noise(job, model_state, noise, scale, combine_fn):
     with torch.no_grad():
-        clone = job.get_model()
-        clone.load_state_dict(model.state_dict())
-        for param, param_noise in zip(clone.parameters(), noise.parameters()):
+        model = job.get_model()
+        model.load_state_dict(model_state)
+        model.eval()
+        for param, param_noise in zip(model.parameters(), noise.parameters()):
             combine_fn(param, param_noise, scale)
-        return clone
+        return model
 
 def apply_additive_noise(param, param_noise, scale):
     param.add_(param_noise * scale)
@@ -68,8 +68,8 @@ def apply_additive_noise(param, param_noise, scale):
 def apply_multiplicative_noise(param, param_noise, scale):
     param.multiply_(1. + param_noise * scale)
 
-def eval_noisy_models(job, examples, models, noises, combine_fn):
-    for m, model in enumerate(models):
+def eval_noisy_models(job, examples, model_states, noises, combine_fn):
+    for m, model_state in enumerate(model_states):
         for n, noise in enumerate(noises):
             # interpolate noisy models
             noise_scales = np.linspace(
@@ -77,7 +77,7 @@ def eval_noisy_models(job, examples, models, noises, combine_fn):
                 float(job.hparams["noise scale max"]),
                 int(job.hparams["noise num points"]))
             for scale in noise_scales:
-                noisy_model = apply_noise(job, model, noise, scale, combine_fn)
+                noisy_model = apply_noise(job, model_state, noise, scale, combine_fn)
                 # evaluate dataset
                 with torch.no_grad():
                     yield noisy_model(examples).detach(), m, n
