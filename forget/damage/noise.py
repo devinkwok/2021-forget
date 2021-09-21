@@ -3,16 +3,13 @@ import time
 import datetime
 import torch
 import numpy as np
-from itertools import product
-from open_lth.models import registry
-from open_lth.foundations import hparams
-from pathlib import Path
 
 
 def sample_and_eval_noisy_models(job):
     # load dataset to CUDA
-    examples = torch.stack([x for x, _ in job.get_eval_dataset()], dim=0)
-    examples = examples.cuda()
+    examples, labels = zip(*job.get_eval_dataset())
+    examples = torch.stack(examples, dim=0).cuda()
+    labels = torch.stack(labels, dim=0).cuda()
 
     noise_type = job.hparams['noise type']
     if noise_type == 'additive':
@@ -34,11 +31,11 @@ def sample_and_eval_noisy_models(job):
         job.save_obj_to_subdir(noise, 'noise_' + noise_type, f'noise{i}')
     
     # save logits for sample/replicate
-    for logits, scales, m, n in eval_noisy_models(
-            job, examples, model_states, noises, combine_fn):
+    for logits, scales, acc, m, n in eval_noisy_models(
+            job, examples, labels, model_states, noises, combine_fn):
         print(f'Output m={m} n={n} t={datetime.datetime.now()}')
         job.save_obj_to_subdir(
-            {'type': noise_type, 'scale': scales, 'logit': logits},
+            {'type': noise_type, 'logit': logits, 'scale': scales, 'accuracy': acc},
             'logits_noise_' + noise_type, f'logits-model{m}-noise{n}')
 
 def load_model_states(job):
@@ -70,12 +67,12 @@ def apply_additive_noise(param, param_noise, scale):
     param.add_(param_noise * scale)
 
 def apply_multiplicative_noise(param, param_noise, scale):
-    param.multiply_(1. + param_noise * scale)
+    param.mul_(1. + param_noise * scale)
 
-def eval_noisy_models(job, examples, model_states, noises, combine_fn):
+def eval_noisy_models(job, examples, labels, model_states, noises, combine_fn):
     for m, model_state in enumerate(model_states):
         for n, noise in enumerate(noises):
-            outputs = []
+            logits, accuracies = [], []
             # interpolate noisy models
             noise_scales = np.linspace(
                 float(job.hparams["noise scale min"]),
@@ -86,6 +83,9 @@ def eval_noisy_models(job, examples, model_states, noises, combine_fn):
                 noisy_model = apply_noise(job, model_state, noise, scale, combine_fn)
                 # evaluate dataset
                 with torch.no_grad():
-                    outputs.append(noisy_model(examples).detach())
-                print(f's={scale} t={time.perf_counter() - start_time}')
-            yield torch.stack(outputs, dim=0), noise_scales, m, n
+                    output = noisy_model(examples).detach()
+                    accuracy = torch.mean(torch.float(torch.argmax(output, dim=1) == labels))
+                    accuracies.append(accuracy)
+                    logits.append(output)
+                print(f's={scale}, a={accuracy}, t={time.perf_counter() - start_time}')
+            yield torch.stack(logits, dim=0), noise_scales, accuracies, m, n
