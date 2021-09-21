@@ -1,5 +1,6 @@
 import os
 import time
+import datetime
 import torch
 import numpy as np
 from itertools import product
@@ -33,14 +34,12 @@ def sample_and_eval_noisy_models(job):
         job.save_obj_to_subdir(noise, 'noise_' + noise_type, f'noise{i}')
     
     # save logits for sample/replicate
-    prev_time = time.perf_counter()
-    for logits, m, n in eval_noisy_models(
+    for logits, scales, m, n in eval_noisy_models(
             job, examples, model_states, noises, combine_fn):
-        next_time = time.perf_counter()
-        print(f'Output m={m} n={n} t={next_time - prev_time}')
-        prev_time = next_time
+        print(f'Output m={m} n={n} t={datetime.datetime.now()}')
         job.save_obj_to_subdir(
-            logits, 'logits_noise_' + noise_type, f'logits-model{m}-noise{n}')
+            {'type': noise_type, 'scale': scales, 'logit': logits},
+            'logits_noise_' + noise_type, f'logits-model{m}-noise{n}')
 
 def load_model_states(job):
     model_states = []
@@ -76,13 +75,17 @@ def apply_multiplicative_noise(param, param_noise, scale):
 def eval_noisy_models(job, examples, model_states, noises, combine_fn):
     for m, model_state in enumerate(model_states):
         for n, noise in enumerate(noises):
+            outputs = []
             # interpolate noisy models
             noise_scales = np.linspace(
                 float(job.hparams["noise scale min"]),
                 float(job.hparams["noise scale max"]),
                 int(job.hparams["noise num points"]))
             for scale in noise_scales:
+                start_time = time.perf_counter()
                 noisy_model = apply_noise(job, model_state, noise, scale, combine_fn)
                 # evaluate dataset
                 with torch.no_grad():
-                    yield noisy_model(examples).detach(), m, n
+                    outputs.append(noisy_model(examples).detach())
+                print(f's={scale} t={time.perf_counter() - start_time}')
+            yield torch.stack(outputs, dim=0), noise_scales, m, n
