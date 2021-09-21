@@ -9,7 +9,7 @@ from pathlib import Path
 
 def sample_and_eval_noisy_models(job):
     # load dataset to CUDA
-    examples = [x for x, _ in job.get_eval_dataset()]
+    examples = torch.stack([x for x, _ in job.get_eval_dataset()], dim=0)
     examples = examples.cuda()
 
     noise_type = job.hparams['noise type']
@@ -25,7 +25,7 @@ def sample_and_eval_noisy_models(job):
     # load trained models and sample noise
     models = load_models(job)
     noises = [sample_noise(job)
-            for _ in range(job.hparams['num noise samples'])]
+            for _ in range(int(job.hparams['num noise samples']))]
 
     # save noise checkpoints
     for i, noise in enumerate(noises):
@@ -72,8 +72,10 @@ def eval_noisy_models(job, examples, models, noises, combine_fn):
     for m, model in enumerate(models):
         for n, noise in enumerate(noises):
             # interpolate noisy models
-            noise_scales = np.linspace(job.hparams["noise scale min"],
-                job.hparams["noise scale max"], job.hparams["noise num points"])
+            noise_scales = np.linspace(
+                float(job.hparams["noise scale min"]),
+                float(job.hparams["noise scale max"]),
+                int(job.hparams["noise num points"]))
             for scale in noise_scales:
                 noisy_model = apply_noise(job, model, noise, scale, combine_fn)
                 # evaluate dataset

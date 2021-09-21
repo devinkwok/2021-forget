@@ -17,7 +17,7 @@ class Job():
             Path(subdir).mkdir(parents=True, exist_ok=True)
 
     def replicate_dirs(self):
-        for i in int(self.hparams['num replicates']):
+        for i in range(int(self.hparams['num replicates'])):
             yield os.path.join(self.save_path, f'model{i}')
 
     def save_obj_to_subdir(self, obj, subdir, filename):
