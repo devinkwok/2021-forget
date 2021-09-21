@@ -1,4 +1,5 @@
 import os
+import time
 import torch
 import numpy as np
 from itertools import product
@@ -32,8 +33,12 @@ def sample_and_eval_noisy_models(job):
         job.save_obj_to_subdir(noise, 'noise_' + noise_type, f'noise{i}')
     
     # save logits for sample/replicate
+    prev_time = time.perf_counter()
     for logits, m, n in eval_noisy_models(
             job, examples, model_states, noises, combine_fn):
+        next_time = time.perf_counter()
+        print(f'Output m={m} n={n} t={next_time - prev_time}')
+        prev_time = next_time
         job.save_obj_to_subdir(
             logits, 'logits_noise_' + noise_type, f'logits-model{m}-noise{n}')
 
