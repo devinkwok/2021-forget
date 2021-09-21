@@ -4,9 +4,9 @@ import datetime
 import numpy as np
 from forget.main import parser
 from forget.training import trainer
-from forget.datasets import createforgetdataset
 from forget.damage import damagemodel
 from forget.postprocess import postprocess
+from forget.damage.noise import eval_noisy_models
 
 
 class run_experiment:
@@ -61,9 +61,12 @@ class run_experiment:
         """
         PROCESS STEP
         """
-        # print(f"Now processing output...")
-        # crtForget = createforgetdataset.createForgetDataset()
-
+        print(f"Now processing output...")
         # dmg = damagemodel.damageModel()
 
         # procs = postprocess.postProcess()
+
+        for job in self.reader.list_jobs():
+            eval_noisy_models()
+
+        print(f"Jobs finished at t={datetime.datetime.now()}")

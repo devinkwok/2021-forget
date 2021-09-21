@@ -1,8 +1,10 @@
-from dataclasses import dataclass
-from pathlib import Path
-import configparser
 import os
 import sys
+import configparser
+from pathlib import Path
+from dataclasses import dataclass
+from job import Job
+
 
 @dataclass
 class readConfig:
@@ -76,3 +78,11 @@ class readConfig:
             return registry.get(_model_params).cuda()
         else:
             pass #to do for case of other model parameters
+
+    def list_jobs(self):
+        job_list = []
+        for job_name in self.jobs:
+            hparams = self.jobs[job_name]
+            job_list.append(
+                Job(job_name, self.exp_path, hparams))
+        return job_list
