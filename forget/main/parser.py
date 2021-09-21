@@ -13,6 +13,7 @@ class readConfig:
         parser.add_argument('--config_file', default="./config/default_config.ini", type=str)
         parser.add_argument('--data_dir', default="./datasets/", type=str)
         args = vars(parser.parse_args())
+        print(f'Runtime args: {args}')
         self.config_file = args['config_file']
         self.data_dir = args['data_dir']
         self.__post_init__()
@@ -27,7 +28,7 @@ class readConfig:
         self.sections = config.sections()
         self.exp_info = {}
         self.jobs = {}
-s
+
         for section in self.sections:
             if section == "Experiment info":
                 options = config.options(section)

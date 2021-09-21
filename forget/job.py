@@ -17,7 +17,7 @@ class Job():
             Path(subdir).mkdir(parents=True, exist_ok=True)
 
     def replicate_dirs(self):
-        for i in self.hparams['num replicates']:
+        for i in int(self.hparams['num replicates']):
             yield os.path.join(self.save_path, f'model{i}')
 
     def save_obj_to_subdir(self, obj, subdir, filename):
@@ -62,10 +62,10 @@ class Job():
     def get_dataloader(self, train=True):
         if train:
             dataset = self.get_train_dataset()
-            batch_size = self.hparams["batch size"]
+            batch_size = int(self.hparams["batch size"])
         else:
             dataset = self.get_eval_dataset()
-            batch_size = self.hparams["eval batch size"]
+            batch_size = int(self.hparams["eval batch size"])
         return DataLoader(dataset, batch_size=batch_size, num_workers=0)
 
     def get_train_dataset(self):
@@ -73,7 +73,7 @@ class Job():
 
     def get_eval_dataset(self):
         train = self._get_dataset(train=True, start=0,
-                end=self.hparams["eval number of train examples"])
+                end=int(self.hparams["eval number of train examples"]))
         test = self._get_dataset(train=False, start=0,
-                end=self.hparams["eval number of test examples"])
+                end=int(self.hparams["eval number of test examples"]))
         return torch.utils.data.ConcatDataset([train, test])

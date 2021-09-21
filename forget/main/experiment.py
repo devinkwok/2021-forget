@@ -25,7 +25,7 @@ class run_experiment:
         #pretraining step:
 
         #get config files from parser
-        self.reader = parser.readConfig(config_file)
+        self.reader = parser.readConfig()
 
         #get the number of models to train
         self.num_models = int(self.reader.exp_info["number of models"])
