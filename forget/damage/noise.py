@@ -9,7 +9,7 @@ def sample_and_eval_noisy_models(job):
     # load dataset to CUDA
     examples, labels = zip(*job.get_eval_dataset())
     examples = torch.stack(examples, dim=0).cuda()
-    labels = torch.stack(labels, dim=0).cuda()
+    labels = torch.tensor(labels).cuda()
 
     noise_type = job.hparams['noise type']
     if noise_type == 'additive':
@@ -28,7 +28,7 @@ def sample_and_eval_noisy_models(job):
 
     # save noise checkpoints
     for i, noise in enumerate(noises):
-        job.save_obj_to_subdir(noise, 'noise_' + noise_type, f'noise{i}')
+        job.save_obj_to_subdir(noise, 'noise_' + noise_type, f'noise{i}.pt')
     
     # save logits for sample/replicate
     for logits, scales, acc, m, n in eval_noisy_models(
@@ -36,7 +36,7 @@ def sample_and_eval_noisy_models(job):
         print(f'Output m={m} n={n} t={datetime.datetime.now()}')
         job.save_obj_to_subdir(
             {'type': noise_type, 'logit': logits, 'scale': scales, 'accuracy': acc},
-            'logits_noise_' + noise_type, f'logits-model{m}-noise{n}')
+            'logits_noise_' + noise_type, f'logits-model{m}-noise{n}.pt')
 
 def load_model_states(job):
     model_states = []
@@ -70,6 +70,7 @@ def apply_multiplicative_noise(param, param_noise, scale):
     param.mul_(1. + param_noise * scale)
 
 def eval_noisy_models(job, examples, labels, model_states, noises, combine_fn):
+    n_examples = labels.shape[0]
     for m, model_state in enumerate(model_states):
         for n, noise in enumerate(noises):
             logits, accuracies = [], []
@@ -84,7 +85,7 @@ def eval_noisy_models(job, examples, labels, model_states, noises, combine_fn):
                 # evaluate dataset
                 with torch.no_grad():
                     output = noisy_model(examples).detach()
-                    accuracy = torch.mean(torch.float(torch.argmax(output, dim=1) == labels))
+                    accuracy = torch.sum(torch.argmax(output, dim=1) == labels).float() / n_examples
                     accuracies.append(accuracy)
                     logits.append(output)
                 print(f's={scale}, a={accuracy}, t={time.perf_counter() - start_time}')
