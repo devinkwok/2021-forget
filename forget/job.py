@@ -8,11 +8,12 @@ from torch.utils.data import DataLoader
 
 class Job():
 
-    def __init__(self, name, exp_path, hparams):
+    def __init__(self, name, exp_path, data_dir, hparams):
         self.name = name
         self.hparams = hparams
+        self.data_dir = data_dir
         self.save_path = os.path.join(exp_path, name)
-        for subdir in self.replicate_dirs:
+        for subdir in self.replicate_dirs():
             Path(subdir).mkdir(parents=True, exist_ok=True)
 
     def replicate_dirs(self):

@@ -26,5 +26,5 @@ mkdir $SLURM_TMPDIR/data
 cp -r $HOME/datasets/cifar10.var/cifar10_torchvision/cifar-10-batches-py $SLURM_TMPDIR/data/
 
 python $SRC_DIR/forget/main/run.py \
-    --config_file=$HOME/proj/2021-forget/config/default_config.ini \
+    --config_file=$HOME/proj/2021-forget/config/eval_noise.ini \
     --data_dir=$SLURM_TMPDIR/data \

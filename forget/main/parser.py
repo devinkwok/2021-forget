@@ -2,29 +2,32 @@ import os
 import sys
 import configparser
 from pathlib import Path
-from dataclasses import dataclass
-from job import Job
+import argparse
+from forget.job import Job
 
 
-@dataclass
 class readConfig:
-    config_file: str = os.getcwd()+"/Forget/config/default_config.ini"
+
+    def __init__(self):
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--config_file', default="./config/default_config.ini", type=str)
+        parser.add_argument('--data_dir', default="./datasets/", type=str)
+        args = vars(parser.parse_args())
+        self.config_file = args['config_file']
+        self.data_dir = args['data_dir']
+        self.__post_init__()
     
     def __post_init__(self):
         print(f"Current working directory: {os.getcwd()}")
         sys.path.append(str(os.path.dirname(os.path.realpath(__file__))))
         parent_dir_path = os.path.dirname(os.getcwd())
-        #parent_dir_path = Path(Path().absolute()).parent
-        #parent_dir_path = os.path.dirname(os.getcwd())
-        #sys.path.append(str(parent_dir_path) + '/open_lth/') #change this
 
         config = configparser.ConfigParser()
         config.read(self.config_file)
         self.sections = config.sections()
         self.exp_info = {}
         self.jobs = {}
-
-
+s
         for section in self.sections:
             if section == "Experiment info":
                 options = config.options(section)
@@ -84,5 +87,5 @@ class readConfig:
         for job_name in self.jobs:
             hparams = self.jobs[job_name]
             job_list.append(
-                Job(job_name, self.exp_path, hparams))
+                Job(job_name, self.exp_path, self.data_dir, hparams))
         return job_list

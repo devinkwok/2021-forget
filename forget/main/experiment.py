@@ -6,7 +6,7 @@ from forget.main import parser
 from forget.training import trainer
 from forget.damage import damagemodel
 from forget.postprocess import postprocess
-from forget.damage.noise import eval_noisy_models
+from forget.damage.noise import sample_and_eval_noisy_models
 
 
 class run_experiment:
@@ -16,7 +16,7 @@ class run_experiment:
     1. Pretraining (e.g. load model from OpenLTH)
     2. Training (for each job, pass models onto trainer.py which trains it and stores the data)
     """
-    def __init__(self, config_file, data_dir):
+    def __init__(self):
         parent_dir_path = os.path.dirname(str(os.path.dirname(os.path.realpath(__file__))))
         sys.path.append(os.getcwd()+"/Forget/open_lth/")
         #sys.path.append(str(parent_dir_path) + "/open_lth/")
@@ -45,18 +45,18 @@ class run_experiment:
         TRAINING STEP
         """
         
-        print(f"Division of jobs (models/job): {self.num_train_per_job}")
-        print(f"Starting training...")
-        #training step:
-        #and for each job, pass models onto trainer
-        for job_idx, job in enumerate(self.reader.jobs):
-            for model_idx in range(self.num_train_per_job[job_idx]):
-                print(f"{job}: {self.reader.jobs[job]}, m={model_idx}, t={datetime.datetime.now()}")
-                model = self.reader.get_model(job)
-                model_trainer = trainer.train(
-                    model, self.reader.exp_info, self.reader.jobs[job], job_idx, model_idx,
-                    data_dir)
-                model_trainer.trainLoop(model)
+        # print(f"Division of jobs (models/job): {self.num_train_per_job}")
+        # print(f"Starting training...")
+        # #training step:
+        # #and for each job, pass models onto trainer
+        # for job_idx, job in enumerate(self.reader.jobs):
+        #     for model_idx in range(self.num_train_per_job[job_idx]):
+        #         print(f"{job}: {self.reader.jobs[job]}, m={model_idx}, t={datetime.datetime.now()}")
+        #         model = self.reader.get_model(job)
+        #         model_trainer = trainer.train(
+        #             model, self.reader.exp_info, self.reader.jobs[job], job_idx, model_idx,
+        #             data_dir)
+        #         model_trainer.trainLoop(model)
         
         """
         PROCESS STEP
@@ -67,6 +67,6 @@ class run_experiment:
         # procs = postprocess.postProcess()
 
         for job in self.reader.list_jobs():
-            eval_noisy_models()
+            sample_and_eval_noisy_models(job)
 
         print(f"Jobs finished at t={datetime.datetime.now()}")
