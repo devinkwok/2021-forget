@@ -129,7 +129,8 @@ def create_ordered_batch_mask(train_batch_size, example_start_idx, example_end_i
     pass #TODO
 
 def stats_str(array):
-    return f'<{np.min(array)} | {np.mean(array)} | {np.max(array)}>'
+    return '<{:0.4f}|{:0.4f}|{:0.4f}>'.format(
+        np.min(array), np.mean(array), np.max(array))
 
 class PlotTraining():
 
@@ -159,7 +160,7 @@ class PlotTraining():
             scores = np.stack(scores, axis=0)
             metric = metric_fn(scores)
             metrics.append(metric)
-            print(f'm={i}, score:{stats_str(scores)}' + \
+            print(f'm={i}, score:{stats_str(scores)} ' + \
                 f'metric: {stats_str(metrics)} t={time.perf_counter() - start_time}')
 
         start_time = time.perf_counter()
@@ -179,7 +180,7 @@ class PlotTraining():
         # plot rank correlations as box plot
         box_plt.boxplot(correlations)
         # also plot individual correlations and p-values as scatter with jitter
-        jitter = np.random.normal(0, 0.05, len(correlations))
+        jitter = np.random.normal(1, 0.05, len(correlations))
         box_plt.plot(jitter, correlations, '.', alpha=0.4)
         box_plt.set_title('Spearman rho')
         self.job.save_obj_to_subdir(plt, 'metrics', name)
