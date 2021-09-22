@@ -74,9 +74,7 @@ class PlotWeights():
                     ax.set_title(cols[j])
                 if j == 0:
                     ax.set_ylabel(rows[i])
-        fig_path = self.job.save_obj_to_subdir(
-            'PLACEHOLDER', 'weight_histograms', filename)
-        plt.savefig(fig_path)
+        self.job.save_obj_to_subdir(plt, 'weight_histograms', filename)
 
     def hist_layers_by_init(self, name_contains=[]):
         last_epoch = self.job.n_epochs - 1  # use last epoch

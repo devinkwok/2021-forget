@@ -2,6 +2,7 @@ import os
 import torch
 import datetime
 from pathlib import Path
+import matplotlib
 from torchvision import datasets
 from torchvision import transforms
 from torch.utils.data import DataLoader
@@ -34,7 +35,10 @@ class Job():
         file = os.path.join(dir, filename)
         Path(dir).mkdir(parents=True, exist_ok=True)
         print(f'Saving {file} to {dir}, t={datetime.datetime.now()}')
-        torch.save(obj, file)
+        if obj == matplotlib.pyplot:
+            obj.savefig(file)
+        else:
+            torch.save(obj, file)
         return file
 
     def get_model(self):
