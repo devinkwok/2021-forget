@@ -76,8 +76,10 @@ class run_experiment:
         """
         for job in self.reader.list_jobs():
             plot_weights = PlotWeights(job)
-            plot_weights.hist_layers_by_init(name_contains='conv1.weight')
-            plot_weights.hist_layers_by_epoch(name_contains='conv1.weight')
-            plot_weights.hist_layers(name_contains='conv1.weight')
+            plot_weights.plot_all(
+                ['conv1.weight', 'conv2.weight'],
+                ['bn1.weight', 'bn2.weight'],
+                ['bn1.bias', 'bn2.bias'],
+                )
 
         print(f"Jobs finished at t={datetime.datetime.now()}")

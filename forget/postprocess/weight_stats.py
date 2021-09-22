@@ -1,7 +1,5 @@
-import os
 import time
 import numpy as np
-from itertools import chain
 from matplotlib import pyplot as plt
 
 class PlotWeights():
@@ -49,14 +47,14 @@ class PlotWeights():
         print(f'Retrieved {n_layers} layers t={time.perf_counter() - start_time}')
         return retrieved_layers
 
-    def plot_histograms(self, layer_dict, filename, n_bins=10):
+    def plot_histograms(self, layer_dict, filename, n_bins=-1):
         # layer_dict is list of outputs from retrieve_layers()
         # which is a list of dicts (layer names) of lists (layers)
         rows = sorted(layer_dict[0].keys())  # organize plots by sorted name
         cols = [i for i in range(len(layer_dict))]
         print(f'Plotting {len(cols)}x{len(rows)} histograms...')
 
-        layer_min, layer_max = -1e9, 1e9
+        layer_min, layer_max = 1e9, -1e9
         data = []
         for name in rows:
             start_time = time.perf_counter()
@@ -66,9 +64,11 @@ class PlotWeights():
             layer_max = max(layer_max, *[np.max(x) for x in data[-1]])
             print(f'{name}, l={len(data[-1])}, t={time.perf_counter() - start_time}')
 
+        if n_bins < 1:
+            n_bins = min(len(data[0][0]) / 5, 30)
         # require at least 2 rows as otherwise matplotlib returns 1D array of axes
         fig, axes = plt.subplots(max(len(rows), 2), max(len(cols), 2),
-                    sharey=True, figsize=(4 * max(len(cols), 2), 4 * max(len(rows), 2)))
+                    sharey=True, figsize=(3 * max(len(cols), 2), 3 * max(len(rows), 2)))
         for i, (row, ax_row) in enumerate(zip(data, axes)):
             for j, (layer, ax) in enumerate(zip(row, ax_row)):
                 ax.hist(layer, bins=n_bins, density=True, range=(layer_min, layer_max))
@@ -87,17 +87,23 @@ class PlotWeights():
         data = [self.retrieve_layers(replicates=i,
                     epochs=last_epoch, name_contains=name_contains)
                 for i in range(self.job.n_replicates)]
-        self.plot_histograms(data, 'hist_by_init' + '-'.join(name_contains) + '.png')
+        self.plot_histograms(data, 'hist_by_init_' + '-'.join(name_contains) + '.png')
 
     def hist_layers_by_epoch(self, name_contains=[]):
         if type(name_contains) is str:
             name_contains = [name_contains]
         data = [self.retrieve_layers(epochs=i, name_contains=name_contains)
             for i in range(self.job.n_epochs)]
-        self.plot_histograms(data, 'hist_by_epoch' + '-'.join(name_contains) + '.png')
+        self.plot_histograms(data, 'hist_by_epoch_' + '-'.join(name_contains) + '.png')
 
     def hist_layers(self, name_contains=[]):
         if type(name_contains) is str:
             name_contains = [name_contains]
         data = [self.retrieve_layers(name_contains=name_contains)]
-        self.plot_histograms(data, 'hist_layers' + '-'.join(name_contains) + '.png')
+        self.plot_histograms(data, 'hist_layers_' + '-'.join(name_contains) + '.png')
+
+    def plot_all(self, *filters):
+        for filter in filters:
+            self.plot_weights.hist_layers_by_init(name_contains=filter)
+            self.plot_weights.hist_layers_by_epoch(name_contains=filter)
+            self.plot_weights.hist_layers(name_contains=filter)
