@@ -89,7 +89,6 @@ def top_1_auc(output_prob_by_iter: typing.List[np.ndarray], divide_by_iters=True
     Returns:
         np.ndarray: array of $N$ area under curve floats.
     """
-    output_prob_by_iter = np.stack(output_prob_by_iter, axis=0)
     auc = np.sum(np.abs(output_prob_by_iter), axis=0)
     if divide_by_iters:
         auc = auc / output_prob_by_iter.shape[0]
@@ -113,7 +112,7 @@ def diff_norm(output_prob_by_iter: typing.List[np.ndarray],
     Returns:
         np.ndarray: array of $N$ mean differences for each sample over all iterations.
     """
-    output_prob_by_iter = np.abs(np.stack(output_prob_by_iter, axis=0))
+    output_prob_by_iter = np.abs(output_prob_by_iter)
     diff = np.abs(output_prob_by_iter[:-1, :] - output_prob_by_iter[1:, :])
     if norm_power <= 0:
         output_diff = np.max(diff, axis=0)
@@ -136,16 +135,15 @@ class PlotTraining():
         self.job = job
         self.batch_mask = create_ordered_batch_mask(self.job.hparams['batch size'],
                         0, self.job.hparams['eval number of train examples'])
+        self.labels = [y for _, y in self.job.get_eval_dataset()]
 
     def iterate_over_logits(self, replicate):
-        dataset = self.job.get_eval_dataset()
-        labels = [y for _, y in dataset]
-        base_dir = os.path.join(self.save_path, f'model{replicate}')
-        for epoch in range(self.job.n_epochs):
+        base_dir = os.path.join(self.job.save_path, f'model{replicate}')
+        for epoch in range(1, self.job.n_epochs):
             logits = torch.load(os.path.join(base_dir, f'eval_logits={epoch}.pt'),
                                 map_location=torch.device('cpu'))
-            for train_batch_idx, (logit, tgt) in enumerate(zip(logits, labels)):
-                yield logit, tgt, train_batch_idx
+            for train_batch_idx, logit in enumerate(logits):
+                yield logit, train_batch_idx
 
     def rank_scores_and_plot(self, output_to_score_fn, metric_fn):
         name = metric_fn.__name__
@@ -153,8 +151,9 @@ class PlotTraining():
         metrics = []
         for i in range(self.job.n_replicates):
             start_time = time.perf_counter()
-            scores = [output_to_score_fn(logit, tgt)
-                for logit, tgt, _ in self.iterate_over_logits(i)]
+            scores = [output_to_score_fn(logit, self.labels)
+                for logit, _ in self.iterate_over_logits(i)]
+            scores = np.stack(scores, axis=0)
             metric = metric_fn(scores)
             metrics.append(metric)
             print(f'm={i}, mean score={np.mean(scores)} t={time.perf_counter() - start_time}')
