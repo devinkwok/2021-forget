@@ -128,6 +128,8 @@ def forgetting_events(output_prob_by_iter, batch_mask=None) -> np.ndarray:
 def create_ordered_batch_mask(train_batch_size, example_start_idx, example_end_idx):
     pass #TODO
 
+def stats_str(array):
+    return f'<{np.min(array)} | {np.mean(array)} | {np.max(array)}>'
 
 class PlotTraining():
 
@@ -137,13 +139,14 @@ class PlotTraining():
                         0, self.job.hparams['eval number of train examples'])
         self.labels = [y for _, y in self.job.get_eval_dataset()]
 
-    def iterate_over_logits(self, replicate):
+    def iterate_over_prob(self, replicate):
         base_dir = os.path.join(self.job.save_path, f'model{replicate}')
         for epoch in range(1, self.job.n_epochs):
             logits = torch.load(os.path.join(base_dir, f'eval_logits={epoch}.pt'),
                                 map_location=torch.device('cpu'))
-            for train_batch_idx, logit in enumerate(logits):
-                yield logit, train_batch_idx
+            probs = torch.softmax(logits, dim=2)
+            for train_batch_idx, prob in enumerate(probs):
+                yield prob, train_batch_idx
 
     def rank_scores_and_plot(self, output_to_score_fn, metric_fn):
         name = metric_fn.__name__
@@ -151,33 +154,33 @@ class PlotTraining():
         metrics = []
         for i in range(self.job.n_replicates):
             start_time = time.perf_counter()
-            scores = [output_to_score_fn(logit, self.labels)
-                for logit, _ in self.iterate_over_logits(i)]
+            scores = [output_to_score_fn(prob, self.labels)
+                for prob, _ in self.iterate_over_prob(i)]
             scores = np.stack(scores, axis=0)
             metric = metric_fn(scores)
             metrics.append(metric)
-            print(f'm={i}, mean score={np.mean(scores)} t={time.perf_counter() - start_time}')
+            print(f'm={i}, score:{stats_str(scores)}' + \
+                f'metric: {stats_str(metrics)} t={time.perf_counter() - start_time}')
 
         start_time = time.perf_counter()
         n_samples = len(metrics[0])
         rank = np.arange(n_samples)
-        correlations, p_values = zip(*[spearmanr(a, b)
-                        for a, b in zip(metrics[:-1], metrics[1:])])
+        # spearmanr returns (rho, p-value), ignore the p-value
+        correlations = [spearmanr(a, b)[0] for a, b in zip(metrics[:-1], metrics[1:])]
         print(f'Rank correlations calculated t={time.perf_counter() - start_time}, plotting...')
 
         # plot sorted metrics as lines
-        fig, (line_plt, box_plt) = plt.subplots(1, 2, figsize=(8,16),
+        fig, (line_plt, box_plt) = plt.subplots(1, 2, figsize=(16, 8),
                                     gridspec_kw={'width_ratios': [2, 1]})
-        colors = plt.cm.jet(np.linspace(0, 1, n_samples))
+        colors = plt.cm.jet(np.linspace(0., 1., n_samples))
         for i, metric in enumerate(metrics):
             line_plt.plot(rank, np.sort(metric), color=colors[i], alpha=0.4)
         line_plt.set_title(name)
         # plot rank correlations as box plot
-        box_plt.boxplot(correlations, p_values)
+        box_plt.boxplot(correlations)
         # also plot individual correlations and p-values as scatter with jitter
         jitter = np.random.normal(0, 0.05, len(correlations))
-        box_plt.plot(jitter + 1, correlations, '.', alpha=0.4)
-        box_plt.plot(jitter + 2, p_values, '.', alpha=0.4)
+        box_plt.plot(jitter, correlations, '.', alpha=0.4)
         box_plt.set_title('Spearman rho')
         self.job.save_obj_to_subdir(plt, 'metrics', name)
 
