@@ -47,7 +47,7 @@ class PlotWeights():
         print(f'Retrieved {n_layers} layers t={time.perf_counter() - start_time}')
         return retrieved_layers
 
-    def plot_histograms(self, layer_dict, filename, n_bins=-1):
+    def plot_histograms(self, layer_dict, filename):
         # layer_dict is list of outputs from retrieve_layers()
         # which is a list of dicts (layer names) of lists (layers)
         rows = sorted(layer_dict[0].keys())  # organize plots by sorted name
@@ -64,14 +64,12 @@ class PlotWeights():
             layer_max = max(layer_max, *[np.max(x) for x in data[-1]])
             print(f'{name}, l={len(data[-1])}, t={time.perf_counter() - start_time}')
 
-        if n_bins < 1:
-            n_bins = min(len(data[0][0]) / 5, 30)
         # require at least 2 rows as otherwise matplotlib returns 1D array of axes
         fig, axes = plt.subplots(max(len(rows), 2), max(len(cols), 2),
                     sharey=True, figsize=(3 * max(len(cols), 2), 3 * max(len(rows), 2)))
         for i, (row, ax_row) in enumerate(zip(data, axes)):
             for j, (layer, ax) in enumerate(zip(row, ax_row)):
-                ax.hist(layer, bins=n_bins, density=True, range=(layer_min, layer_max))
+                ax.hist(layer, bins='rice', density=True, range=(layer_min, layer_max))
                 if i == 0:
                     ax.set_title(cols[j])
                 if j == 0:
@@ -104,6 +102,6 @@ class PlotWeights():
 
     def plot_all(self, *filters):
         for filter in filters:
-            self.plot_weights.hist_layers_by_init(name_contains=filter)
-            self.plot_weights.hist_layers_by_epoch(name_contains=filter)
-            self.plot_weights.hist_layers(name_contains=filter)
+            self.hist_layers_by_init(name_contains=filter)
+            self.hist_layers_by_epoch(name_contains=filter)
+            self.hist_layers(name_contains=filter)
