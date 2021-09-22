@@ -161,23 +161,26 @@ class PlotTraining():
         start_time = time.perf_counter()
         n_samples = len(metrics[0])
         rank = np.arange(n_samples)
-        correlations = [spearmanr(a, b) for a, b in zip(metrics[:-1], metrics[1:])]
+        correlations, p_values = zip(*[spearmanr(a, b)
+                        for a, b in zip(metrics[:-1], metrics[1:])])
         print(f'Rank correlations calculated t={time.perf_counter() - start_time}, plotting...')
 
         # plot sorted metrics as lines
-        fig, (line_plt, box_plt) = plt.subplots(1, 2)
-        cmap = plt.cm.jet
+        fig, (line_plt, box_plt) = plt.subplots(1, 2, figsize=(8,16),
+                                    gridspec_kw={'width_ratios': [2, 1]})
+        colors = plt.cm.jet(np.linspace(0, 1, n_samples))
         for i, metric in enumerate(metrics):
-            line_plt.plot(rank, metric, color=cmap(i / n_samples))
+            line_plt.plot(rank, np.sort(metric), color=colors[i], alpha=0.4)
         line_plt.set_title(name)
         # plot rank correlations as box plot
-        box_plt.boxplot(correlations)
-        # also plot individual correlations as scatter
+        box_plt.boxplot(correlations, p_values)
+        # also plot individual correlations and p-values as scatter with jitter
         jitter = np.random.normal(0, 0.05, len(correlations))
-        box_plt.plot(jitter, correlations, '.', alpha=0.4)
+        box_plt.plot(jitter + 1, correlations, '.', alpha=0.4)
+        box_plt.plot(jitter + 2, p_values, '.', alpha=0.4)
         box_plt.set_title('Spearman rho')
         self.job.save_obj_to_subdir(plt, 'metrics', name)
-    
+
     def batch_forgetting(self, output_prob_by_iter):  # as implemented by Toneva, same as Nikhil'ss
         return forgetting_events(output_prob_by_iter, batch_mask=self.batch_mask)
 
