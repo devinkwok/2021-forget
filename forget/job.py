@@ -1,5 +1,6 @@
 import os
 import torch
+import datetime
 from pathlib import Path
 from torchvision import datasets
 from torchvision import transforms
@@ -16,14 +17,23 @@ class Job():
         for subdir in self.replicate_dirs():
             Path(subdir).mkdir(parents=True, exist_ok=True)
 
+    @property
+    def n_replicates(self):
+        return int(self.hparams['num replicates'])
+
+    @property
+    def n_epochs(self):
+        return int(self.hparams['num epochs']) + 1
+
     def replicate_dirs(self):
-        for i in range(int(self.hparams['num replicates'])):
+        for i in range(self.n_replicates):
             yield os.path.join(self.save_path, f'model{i}')
 
     def save_obj_to_subdir(self, obj, subdir, filename):
         dir = os.path.join(self.save_path, subdir)
         file = os.path.join(dir, filename)
         Path(dir).mkdir(parents=True, exist_ok=True)
+        print(f'Saving {file} to {dir}, t={datetime.datetime.now()}')
         torch.save(obj, file)
 
     def get_model(self):
@@ -77,3 +87,15 @@ class Job():
         test = self._get_dataset(train=False, start=0,
                 end=int(self.hparams["eval number of test examples"]))
         return torch.utils.data.ConcatDataset([train, test])
+
+    def load_checkpoints(self, epoch_idx, to_cpu=False):
+        # list all available epochs (+1 to include init at epoch 0)
+        epochs = [x for x in range(self.n_epochs)]
+        epoch = epochs[epoch_idx]
+        for dir in self.replicate_dirs():
+            fname = os.path.join(dir, f'epoch={epoch}.pt')
+            if to_cpu:
+                model = torch.load(fname, map_location=torch.device('cpu'))
+            else:
+                model = torch.load(fname)
+            yield model

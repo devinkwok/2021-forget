@@ -1,6 +1,5 @@
 import os
 import time
-import datetime
 import torch
 import numpy as np
 
@@ -22,7 +21,8 @@ def sample_and_eval_noisy_models(job):
         raise ValueError(f"config value 'noise type'={noise_type} is undefined")
 
     # load trained models and sample noise
-    model_states = load_model_states(job)
+    model_states = [ckpt['model_state_dict']
+                    for ckpt in job.load_checkpoints(-1)]
     noises = [sample_noise(job)
             for _ in range(int(job.hparams['num noise samples']))]
 
@@ -33,18 +33,9 @@ def sample_and_eval_noisy_models(job):
     # save logits for sample/replicate
     for logits, scales, acc, m, n in eval_noisy_models(
             job, examples, labels, model_states, noises, combine_fn):
-        print(f'Output m={m} n={n} t={datetime.datetime.now()}')
         job.save_obj_to_subdir(
             {'type': noise_type, 'logit': logits, 'scale': scales, 'accuracy': acc},
             'logits_noise_' + noise_type, f'logits-model{m}-noise{n}.pt')
-
-def load_model_states(job):
-    model_states = []
-    ckpt_id = job.hparams['num epochs']
-    for dir in job.replicate_dirs():
-        model = torch.load(os.path.join(dir, f'epoch={ckpt_id}.pt'))
-        model_states.append(model['model_state_dict'])
-    return model_states
 
 def sample_gaussians(job):
     noise = job.get_model()

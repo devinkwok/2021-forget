@@ -7,6 +7,7 @@ from forget.training import trainer
 from forget.damage import damagemodel
 from forget.postprocess import postprocess
 from forget.damage.noise import sample_and_eval_noisy_models
+from forget.postprocess.weight_stats import PlotWeights
 
 
 class run_experiment:
@@ -44,6 +45,7 @@ class run_experiment:
         """
         TRAINING STEP
         """
+        print(f"Jobs started at t={datetime.datetime.now()}")
         
         # print(f"Division of jobs (models/job): {self.num_train_per_job}")
         # print(f"Starting training...")
@@ -63,10 +65,19 @@ class run_experiment:
         """
         print(f"Now processing output...")
         # dmg = damagemodel.damageModel()
-
         # procs = postprocess.postProcess()
 
+        """New noise evaluation
+        """
+        # for job in self.reader.list_jobs():
+        #     sample_and_eval_noisy_models(job)
+
+        """Plot model weights
+        """
         for job in self.reader.list_jobs():
-            sample_and_eval_noisy_models(job)
+            plot_weights = PlotWeights(job)
+            plot_weights.hist_layers_by_init(name_contains='weight')
+            plot_weights.hist_layers_by_epoch(name_contains='weight')
+            plot_weights.hist_layers(name_contains='weight')
 
         print(f"Jobs finished at t={datetime.datetime.now()}")

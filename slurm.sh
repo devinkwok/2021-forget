@@ -21,9 +21,10 @@ source $SLURM_TMPDIR/env/bin/activate
 pip install --upgrade pip
 pip install -r $SRC_DIR/requirements.txt
 
+#TODO $SLURM_TMPDIR doesn't work with torchvision
 # copy training data to node
-mkdir $SLURM_TMPDIR/data
-cp -r $HOME/datasets/cifar10.var/cifar10_torchvision/cifar-10-batches-py $SLURM_TMPDIR/data/
+# mkdir $SLURM_TMPDIR/data
+# cp -r $HOME/datasets/cifar10.var/cifar10_torchvision/cifar-10-batches-py $SLURM_TMPDIR/data/
 
 python $SRC_DIR/forget/main/run.py \
     --config_file=$SRC_DIR/config/eval_noise.ini \
