@@ -68,14 +68,14 @@ class PlotWeights():
 
         # require at least 2 rows as otherwise matplotlib returns 1D array of axes
         fig, axes = plt.subplots(max(len(rows), 2), max(len(cols), 2),
-                                sharey=True, tight_layout=True)
+                    sharey=True, figsize=(4 * max(len(cols), 2), 4 * max(len(rows), 2)))
         for i, (row, ax_row) in enumerate(zip(data, axes)):
             for j, (layer, ax) in enumerate(zip(row, ax_row)):
                 ax.hist(layer, bins=n_bins, density=True, range=(layer_min, layer_max))
                 if i == 0:
-                    ax.set_title(rows[j])
+                    ax.set_title(cols[j])
                 if j == 0:
-                    ax.set_ylabel(cols[i])
+                    ax.set_ylabel(rows[i])
         fig_path = self.job.save_obj_to_subdir(
             'PLACEHOLDER', 'weight_histograms', filename)
         plt.savefig(fig_path)
