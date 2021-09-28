@@ -22,7 +22,7 @@ def eval_noise(job, name_contains=[]):
     if type(name_contains) is str:
         name_contains = [name_contains]
     noise_type = job.hparams['noise type']
-    noise_ckpt_freq = job.hparams['noise checkpoint freq']
+    noise_ckpt_freq = job.hparams['noise checkpoint frequency']
 
     # load dataset to CUDA
     examples, labels = zip(*job.get_eval_dataset())
@@ -31,10 +31,10 @@ def eval_noise(job, name_contains=[]):
 
     # load trained models and sample noise
     model_states = [ckpt['model_state_dict']
-                    for ckpt in job.load_checkpoints(epoch=-1)]
+                    for ckpt, _ in job.load_checkpoints_by_epoch(-1)]
     noise_states = [ckpt['model_state_dict']
-                    for ckpt in job.load_checkpoints(
-                        subdir='noise_' + job.hparams['noise distribution'])]
+                    for ckpt, _ in job.load_checkpoints_from_dir(
+                        'noise_' + job.hparams['noise distribution'])]
     # cross product over samples x replicates
     for m, model in enumerate(model_states):
         for n, noise in enumerate(noise_states):

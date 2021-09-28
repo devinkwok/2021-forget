@@ -34,7 +34,7 @@ class Job():
         dir = os.path.join(self.save_path, subdir)
         file = os.path.join(dir, filename)
         Path(dir).mkdir(parents=True, exist_ok=True)
-        print(f'Saving {file} to {dir}, t={datetime.datetime.now()}')
+        print(f'Saving {filename} to {subdir}, t={datetime.datetime.now()}')
         if obj == matplotlib.pyplot:
             obj.savefig(file)
         else:
@@ -97,14 +97,25 @@ class Job():
         return torch.utils.data.ConcatDataset([train, test])
 
     #TODO this is not an efficient abstraction due to loading from other dirs (e.g. noise checkpoints)
-    def load_checkpoints(self, epoch_idx=-1, to_cpu=False):
+    def load_checkpoints_by_epoch(self, epoch_idx=-1, to_cpu=False):
         # use list indexing to comprehend idx (+1 includes init at epoch 0)
         epochs = [x for x in range(self.n_epochs)]
         epoch = epochs[epoch_idx]
-        for dir in self.replicate_dirs():
-            fname = os.path.join(dir, f'epoch={epoch}.pt')
+        for rep_dir in self.replicate_dirs():
+            file = os.path.join(rep_dir, f'epoch={epoch}.pt')
             if to_cpu:
-                model = torch.load(fname, map_location=torch.device('cpu'))
+                model = torch.load(file, map_location=torch.device('cpu'))
             else:
-                model = torch.load(fname)
-            yield model
+                model = torch.load(file)
+            yield model, rep_dir
+
+    def load_checkpoints_from_dir(self, subdir, to_cpu=False):
+        root = os.path.join(self.job.save_path, subdir)
+        for file in os.listdir(root):
+            name, suffix = os.path.splitext(file)
+            if suffix == '.pt':
+                if to_cpu:
+                    model = torch.load(file, map_location=torch.device('cpu'))
+                else:
+                    model = torch.load(file)
+                yield model, name

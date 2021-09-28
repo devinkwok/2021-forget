@@ -28,18 +28,17 @@ class PlotWeights():
         print(f'Models loaded.')
 
     def _load_noise_epochs(self, subdir):
-        root = os.path.join(self.job.save_path, subdir)
-        for file in os.listdir(root):
-            name, suffix = os.path.splitext(file)
-            if suffix == '.pt':
-                model, noise, epoch = [component.split('=')[-1] for component in name.split('-')]
-                ckpt = torch.load(os.path.join(root, file), map_location=torch.device('cpu'))
-                rep = model * self.job.n_replicates + noise
-                yield rep, epoch, ckpt
+        for ckpt, name in self.job.load_checkpoints_from_dir(
+                os.path.join(self.job.save_path, subdir), to_cpu=True):
+            model, noise, epoch = [int(component.split('=')[-1]) for component in name.split('-')]
+            rep = model * self.job.n_replicates + noise
+            yield rep, epoch, ckpt
 
     def _load_training_epochs(self):
         for epoch in range(self.job.n_epochs):
-            for rep, ckpt in enumerate(self.job.load_checkpoints(epoch, to_cpu=True)):
+            for ckpt, rep_name in enumerate(
+                    self.job.load_checkpoints_by_epoch(epoch, to_cpu=True)):
+                rep = int(rep_name[len('model'):])  # convert 'model0' to 0
                 yield rep, epoch, ckpt
 
     def retrieve_layers(self, replicates=[], epochs=[], name_contains=[]):
