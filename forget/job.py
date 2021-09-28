@@ -15,7 +15,7 @@ class Job():
         self.hparams = hparams
         self.data_dir = data_dir
         self.save_path = os.path.join(exp_path, name)
-        for subdir in self.replicate_dirs():
+        for subdir, _ in self.replicate_dirs():
             Path(subdir).mkdir(parents=True, exist_ok=True)
 
     @property
@@ -28,7 +28,8 @@ class Job():
 
     def replicate_dirs(self):
         for i in range(self.n_replicates):
-            yield os.path.join(self.save_path, f'model{i}')
+            name = f'model{i}'
+            yield os.path.join(self.save_path, name), name
 
     def save_obj_to_subdir(self, obj, subdir, filename):
         dir = os.path.join(self.save_path, subdir)
@@ -101,21 +102,22 @@ class Job():
         # use list indexing to comprehend idx (+1 includes init at epoch 0)
         epochs = [x for x in range(self.n_epochs)]
         epoch = epochs[epoch_idx]
-        for rep_dir in self.replicate_dirs():
-            file = os.path.join(rep_dir, f'epoch={epoch}.pt')
+        for dir, name in self.replicate_dirs():
+            file = os.path.join(dir, f'epoch={epoch}.pt')
             if to_cpu:
                 model = torch.load(file, map_location=torch.device('cpu'))
             else:
                 model = torch.load(file)
-            yield model, rep_dir
+            yield model, name
 
     def load_checkpoints_from_dir(self, subdir, to_cpu=False):
-        root = os.path.join(self.job.save_path, subdir)
+        root = os.path.join(self.save_path, subdir)
         for file in os.listdir(root):
             name, suffix = os.path.splitext(file)
             if suffix == '.pt':
+                fname = os.path.join(root, file)
                 if to_cpu:
-                    model = torch.load(file, map_location=torch.device('cpu'))
+                    model = torch.load(fname, map_location=torch.device('cpu'))
                 else:
-                    model = torch.load(file)
+                    model = torch.load(fname)
                 yield model, name

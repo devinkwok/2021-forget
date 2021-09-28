@@ -10,12 +10,12 @@ class PlotWeights():
         print(f'Loading models...')
         self.job = job
         if noise_subdir is not None:
-            ckpt_source = self._load_noisy_epochs(noise_subdir)
+            ckpt_source = self._load_noise_epochs(noise_subdir)
         else:
             ckpt_source = self._load_training_epochs()
         # store all weight layers
         self.layers = {}
-        for rep, epoch, ckpt in ckpt_source():
+        for rep, epoch, ckpt in ckpt_source:
             if rep not in self.layers:
                 self.layers[rep] = {}
             if epoch not in self.layers[rep]:
@@ -36,8 +36,7 @@ class PlotWeights():
 
     def _load_training_epochs(self):
         for epoch in range(self.job.n_epochs):
-            for ckpt, rep_name in enumerate(
-                    self.job.load_checkpoints_by_epoch(epoch, to_cpu=True)):
+            for ckpt, rep_name in self.job.load_checkpoints_by_epoch(epoch, to_cpu=True):
                 rep = int(rep_name[len('model'):])  # convert 'model0' to 0
                 yield rep, epoch, ckpt
 

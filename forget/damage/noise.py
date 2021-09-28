@@ -15,14 +15,18 @@ def sample_noise(job):
             for _ in range(int(job.hparams['num noise samples']))]
     for i, noise in enumerate(noises):
         job.save_obj_to_subdir(
-            {'type': noise_dist, 'replicate': i, 'state_dict': noise},
+            {
+                'type': noise_dist,
+                'replicate': i,
+                'model_state_dict': noise
+            },
             'noise_' + noise_dist, f'noise{i}.pt')
 
 def eval_noise(job, name_contains=[]):
     if type(name_contains) is str:
         name_contains = [name_contains]
     noise_type = job.hparams['noise type']
-    noise_ckpt_freq = job.hparams['noise checkpoint frequency']
+    noise_ckpt_freq = int(job.hparams['noise checkpoint frequency'])
 
     # load dataset to CUDA
     examples, labels = zip(*job.get_eval_dataset())
@@ -66,7 +70,7 @@ def eval_noise(job, name_contains=[]):
                     'scale': scales,
                     'accuracy': accuracies,
                 },
-                'logits_noise_' + noise_type + '-'.join(name_contains),
+                f'logits_noise_{noise_type}+{"-".join(name_contains)}',
                 f'logits-model{m}-noise{n}.pt')
 
 def sample_gaussians(job):
@@ -77,11 +81,12 @@ def sample_gaussians(job):
             param.normal_(mean=0, std=1.)
     return noise.state_dict()
 
-def apply_noise(job, model_state, noise, scale, combine_fn, name_contains):
+def apply_noise(job, model_state, noise_state, scale, combine_fn, name_contains):
     with torch.no_grad():
-        model = job.get_model()
-        model.load_state_dict(model_state)
+        model = job.get_model(model_state)
+        noise = job.get_model(noise_state)
         model.eval()
+        noise.eval()
         for (name, param), param_noise in zip(
                     model.named_parameters(), noise.parameters()):
             if len(name_contains) == 0 or \
