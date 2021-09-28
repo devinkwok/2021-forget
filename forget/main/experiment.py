@@ -1,3 +1,4 @@
+from io import IncrementalNewlineDecoder
 import os
 import sys
 import datetime
@@ -71,8 +72,8 @@ class run_experiment:
         for job in self.reader.list_jobs():
             """New noise evaluation
             """
-            sample_noise(job)
-            eval_noise(job, name_contains=['conv'])
+            # sample_noise(job)
+            # eval_noise(job, name_contains=['conv'])
 
             """Plot model weights
             """
@@ -82,17 +83,21 @@ class run_experiment:
             #     ['bn1.weight', 'bn2.weight'],
             #     ['bn1.bias', 'bn2.bias'],
             #     )
-            # noisy model weights
-            plot_weights = PlotWeights(job, noise_subdir='noise_additive_conv')
-            plot_weights.plot_all(
-                ['conv', 'fc.weight', 'shortcut.0.weight'],
-                ['bn1.weight', 'bn2.weight'],
-                ['bn1.bias', 'bn2.bias'],
-                )
+            # # noisy model weights
+            # plot_weights = PlotWeights(job, noise_subdir='noise_additive_conv')
+            # plot_weights.plot_all(
+            #     ['conv', 'fc.weight', 'shortcut.0.weight'],
+            #     ['bn1.weight', 'bn2.weight'],
+            #     ['bn1.bias', 'bn2.bias'],
+            #     )
 
             """Plot auc, diff, and forgetting ranks
             """
-            # plot_training = PlotTraining(job)
-            # plot_training.plot_forget_auc_diff_ranks()
+            plot_training = PlotTraining(job)
+            plot_training.plot_forget_auc_diff_ranks()
+            plot_training = PlotTraining(job, include_examples='train')
+            plot_training.plot_forget_auc_diff_ranks()
+            plot_training = PlotTraining(job, include_examples='test')
+            plot_training.plot_forget_auc_diff_ranks()
 
         print(f"Jobs finished at t={datetime.datetime.now()}")

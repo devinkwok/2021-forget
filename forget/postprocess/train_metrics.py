@@ -134,20 +134,37 @@ def stats_str(array):
 
 class PlotTraining():
 
-    def __init__(self, job):
+    def __init__(self, job, include_examples='all'):
+        # filter batch by train/test examples
         self.job = job
+        self.include_examples = include_examples
         self.batch_mask = create_ordered_batch_mask(self.job.hparams['batch size'],
-                        0, self.job.hparams['eval number of train examples'])
-        self.labels = [y for _, y in self.job.get_eval_dataset()]
+                        0, int(self.job.hparams['eval number of train examples']))
+        labels = np.array([y for _, y in self.job.get_eval_dataset()])
+        self.labels = self._train_eval_filter(labels)
 
-    def iterate_over_prob(self, replicate):
+    def _train_eval_filter(self, ndarray):
+        split_point = int(self.job.hparams['eval number of train examples'])
+        if self.include_examples == 'train':
+            return ndarray[:split_point, ...]
+        elif self.include_examples == 'test':
+            return ndarray[split_point:, ...]
+        else:
+            return ndarray
+
+    def plot_label_dist(self):
+        values, counts = np.unique(self.labels, return_counts=True)
+        plt.bar(values, counts)
+        self.job.save_obj_to_subdir(plt, 'metrics', self.include_examples + '_label_dist')
+
+    def prob_by_iter(self, replicate):
         base_dir = os.path.join(self.job.save_path, f'model{replicate}')
         for epoch in range(1, self.job.n_epochs):
             logits = torch.load(os.path.join(base_dir, f'eval_logits={epoch}.pt'),
                                 map_location=torch.device('cpu'))
             probs = torch.softmax(logits, dim=2)
             for train_batch_idx, prob in enumerate(probs):
-                yield prob, train_batch_idx
+                yield self._train_eval_filter(prob), train_batch_idx
 
     def rank_scores_and_plot(self, output_to_score_fn, metric_fn):
         name = metric_fn.__name__
@@ -156,7 +173,7 @@ class PlotTraining():
         for i in range(self.job.n_replicates):
             start_time = time.perf_counter()
             scores = [output_to_score_fn(prob, self.labels)
-                for prob, _ in self.iterate_over_prob(i)]
+                for prob, _ in self.prob_by_iter(i)]
             scores = np.stack(scores, axis=0)
             metric = metric_fn(scores)
             metrics.append(metric)
@@ -183,13 +200,13 @@ class PlotTraining():
         jitter = np.random.normal(1, 0.05, len(correlations))
         box_plt.plot(jitter, correlations, '.', alpha=0.4)
         box_plt.set_title('Spearman rho')
-        self.job.save_obj_to_subdir(plt, 'metrics', name)
+        self.job.save_obj_to_subdir(plt, 'metrics', self.include_examples + '_' + name)
 
     def batch_forgetting(self, output_prob_by_iter):  # as implemented by Toneva, same as Nikhil'ss
         return forgetting_events(output_prob_by_iter, batch_mask=self.batch_mask)
 
     def plot_forget_auc_diff_ranks(self):
-        #TODO split between train and test
+        self.plot_label_dist()
         self.rank_scores_and_plot(outputs_to_correctness, top_1_auc)
         self.rank_scores_and_plot(outputs_to_correctness, diff_norm)
         # self.rank_scores_and_plot(outputs_to_correctness, forgetting_events)
