@@ -6,7 +6,7 @@ from forget.main import parser
 from forget.training import trainer
 from forget.damage import damagemodel
 from forget.postprocess import postprocess
-from forget.damage.noise import sample_and_eval_noisy_models
+from forget.damage.noise import sample_noise, eval_noise
 from forget.postprocess.weight_stats import PlotWeights
 from forget.postprocess.train_metrics import PlotTraining
 
@@ -71,20 +71,28 @@ class run_experiment:
         for job in self.reader.list_jobs():
             """New noise evaluation
             """
-            #     sample_and_eval_noisy_models(job)
+            sample_noise(job)
+            eval_noise(job, name_contains=['conv'])
 
             """Plot model weights
             """
-            # plot_weights = PlotWeights(job)
-            # plot_weights.plot_all(
-            #     ['conv1.weight', 'conv2.weight'],
-            #     ['bn1.weight', 'bn2.weight'],
-            #     ['bn1.bias', 'bn2.bias'],
-            #     )
+            plot_weights = PlotWeights(job)
+            plot_weights.plot_all(
+                ['conv', 'fc.weight', 'shortcut.0.weight'],
+                ['bn1.weight', 'bn2.weight'],
+                ['bn1.bias', 'bn2.bias'],
+                )
+            # noisy model weights
+            plot_weights = PlotWeights(job, noise_subdir='noise_additive_conv')
+            plot_weights.plot_all(
+                ['conv', 'fc.weight', 'shortcut.0.weight'],
+                ['bn1.weight', 'bn2.weight'],
+                ['bn1.bias', 'bn2.bias'],
+                )
 
             """Plot auc, diff, and forgetting ranks
             """
-            plot_training = PlotTraining(job)
-            plot_training.plot_forget_auc_diff_ranks()
+            # plot_training = PlotTraining(job)
+            # plot_training.plot_forget_auc_diff_ranks()
 
         print(f"Jobs finished at t={datetime.datetime.now()}")

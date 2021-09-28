@@ -1,23 +1,46 @@
+import os
 import time
+import torch
 import numpy as np
 from matplotlib import pyplot as plt
 
 class PlotWeights():
 
-    def __init__(self, job):
+    def __init__(self, job, noise_subdir=None):
         print(f'Loading models...')
         self.job = job
+        if noise_subdir is not None:
+            ckpt_source = self._load_noisy_epochs(noise_subdir)
+        else:
+            ckpt_source = self._load_training_epochs()
+        # store all weight layers
         self.layers = {}
-        for epoch in range(job.n_epochs):
-            self.layers[epoch] = {}
-            for rep, ckpt in enumerate(job.load_checkpoints(epoch, to_cpu=True)):
-                start_time = time.perf_counter()
-                self.layers[epoch][rep] = {}
-                state_dict = ckpt['model_state_dict']
-                for layer_name, layer in state_dict.items():
-                    self.layers[epoch][rep][layer_name] = layer
-                print(f'm={rep}, ep={epoch}, p={len(state_dict)}, t={time.perf_counter() - start_time}')
+        for rep, epoch, ckpt in ckpt_source():
+            if rep not in self.layers:
+                self.layers[rep] = {}
+            if epoch not in self.layers[rep]:
+                self.layers[rep][epoch] = {}
+            start_time = time.perf_counter()
+            state_dict = ckpt['model_state_dict']
+            for layer_name, layer in state_dict.items():
+                self.layers[epoch][rep][layer_name] = layer
+            print(f'm={rep}, ep={epoch}, p={len(state_dict)}, t={time.perf_counter() - start_time}')
         print(f'Models loaded.')
+
+    def _load_noise_epochs(self, subdir):
+        root = os.path.join(self.job.save_path, subdir)
+        for file in os.listdir(root):
+            name, suffix = os.path.splitext(file)
+            if suffix == '.pt':
+                model, noise, epoch = [component.split('=')[-1] for component in name.split('-')]
+                ckpt = torch.load(os.path.join(root, file), map_location=torch.device('cpu'))
+                rep = model * self.job.n_replicates + noise
+                yield rep, epoch, ckpt
+
+    def _load_training_epochs(self):
+        for epoch in range(self.job.n_epochs):
+            for rep, ckpt in enumerate(self.job.load_checkpoints(epoch, to_cpu=True)):
+                yield rep, epoch, ckpt
 
     def retrieve_layers(self, replicates=[], epochs=[], name_contains=[]):
         start_time = time.perf_counter()
@@ -35,9 +58,9 @@ class PlotWeights():
         print(f'Filtering replicates={replicates}, epochs={epochs}, names={name_contains}...')
         n_layers = 0
         retrieved_layers = {}
-        for epoch in epochs:
-            for rep in replicates:
-                for layer_name, layer in self.layers[epoch][rep].items():
+        for rep in replicates:
+            for epoch in epochs:
+                for layer_name, layer in self.layers[rep][epoch].items():
                     if len(name_contains) == 0 or \
                             any(x in layer_name for x in name_contains):
                         if layer_name not in retrieved_layers:

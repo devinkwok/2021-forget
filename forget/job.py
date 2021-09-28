@@ -41,7 +41,7 @@ class Job():
             torch.save(obj, file)
         return file
 
-    def get_model(self):
+    def get_model(self, state_dict=None):
         from open_lth.foundations import hparams
         from open_lth.models import registry
 
@@ -52,9 +52,12 @@ class Job():
                 'kaiming_uniform',
                 'uniform'
             )
-            return registry.get(_model_params).cuda()
-        raise ValueError(
-            f"'model parameters'={model_type} is not defined")
+            model = registry.get(_model_params).cuda()
+        else:
+            raise ValueError(f"'model parameters'={model_type} is not defined")
+        if state_dict is not None:
+            model.load_state_dict(state_dict)
+        return model
 
     def _get_dataset(self, train=True, start=0, end=-1):
         dataset_name = self.hparams['dataset']
@@ -93,8 +96,9 @@ class Job():
                 end=int(self.hparams["eval number of test examples"]))
         return torch.utils.data.ConcatDataset([train, test])
 
-    def load_checkpoints(self, epoch_idx, to_cpu=False):
-        # list all available epochs (+1 to include init at epoch 0)
+    #TODO this is not an efficient abstraction due to loading from other dirs (e.g. noise checkpoints)
+    def load_checkpoints(self, epoch_idx=-1, to_cpu=False):
+        # use list indexing to comprehend idx (+1 includes init at epoch 0)
         epochs = [x for x in range(self.n_epochs)]
         epoch = epochs[epoch_idx]
         for dir in self.replicate_dirs():

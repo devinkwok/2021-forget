@@ -189,6 +189,7 @@ class PlotTraining():
         return forgetting_events(output_prob_by_iter, batch_mask=self.batch_mask)
 
     def plot_forget_auc_diff_ranks(self):
+        #TODO split between train and test
         self.rank_scores_and_plot(outputs_to_correctness, top_1_auc)
         self.rank_scores_and_plot(outputs_to_correctness, diff_norm)
         # self.rank_scores_and_plot(outputs_to_correctness, forgetting_events)
