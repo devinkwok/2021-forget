@@ -70,7 +70,7 @@ def eval_noise(job, name_contains=[]):
                     'scale': scales,
                     'accuracy': accuracies,
                 },
-                f'logits_noise_{noise_type}+{"-".join(name_contains)}',
+                f'logits_noise_{noise_type}_{"-".join(name_contains)}',
                 f'logits-model{m}-noise{n}.pt')
 
 def sample_gaussians(job):

@@ -7,22 +7,21 @@ from matplotlib import pyplot as plt
 
 class PlotWeights():
 
-    def __init__(self, job, noise_subdir=None):
+    def __init__(self, job, noise_subdir=''):
         print(f'Loading models...')
         self.job = job
-        if noise_subdir is not None:
-            self.noise_subdir = noise_subdir
-            ckpt_source = self._load_noise_epochs(noise_subdir)
-        else:
-            self.noise_subdir = '==TRAIN=='
+        self.noise_subdir = noise_subdir
+        if self.noise_subdir == '':
             ckpt_source = self._load_training_epochs()
+        else:
+            ckpt_source = self._load_noise_epochs(noise_subdir)
         # store all weight layers
         self.layers = {}
         self.epochs = []
         self.reps = []
         for rep, epoch, ckpt in ckpt_source:
-            self.epochs.add(epoch)
-            self.reps.add(rep)
+            self.epochs.append(epoch)
+            self.reps.append(rep)
             if rep not in self.layers:
                 self.layers[rep] = {}
             if epoch not in self.layers[rep]:
@@ -34,7 +33,7 @@ class PlotWeights():
             print(f'm={rep}, ep={epoch}, p={len(state_dict)}, t={time.perf_counter() - start_time}')
         self.epochs = sorted(set(self.epochs))
         self.reps = sorted(set(self.reps))
-        print(f'Models loaded: replicates=\n{self.reps} \nepochs=\n{self.epochs}.')
+        print(f'Models loaded:\n\treplicates=\n{self.reps} \n\tepochs=\n{self.epochs}')
 
     def _load_noise_epochs(self, subdir):
         for ckpt, name in self.job.load_checkpoints_from_dir(

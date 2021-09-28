@@ -76,12 +76,12 @@ class run_experiment:
 
             """Plot model weights
             """
-            plot_weights = PlotWeights(job)
-            plot_weights.plot_all(
-                ['conv', 'fc.weight', 'shortcut.0.weight'],
-                ['bn1.weight', 'bn2.weight'],
-                ['bn1.bias', 'bn2.bias'],
-                )
+            # plot_weights = PlotWeights(job)
+            # plot_weights.plot_all(
+            #     ['conv', 'fc.weight', 'shortcut.0.weight'],
+            #     ['bn1.weight', 'bn2.weight'],
+            #     ['bn1.bias', 'bn2.bias'],
+            #     )
             # noisy model weights
             plot_weights = PlotWeights(job, noise_subdir='noise_additive_conv')
             plot_weights.plot_all(
