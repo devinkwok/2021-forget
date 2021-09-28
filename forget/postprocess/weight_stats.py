@@ -18,8 +18,8 @@ class PlotWeights():
             ckpt_source = self._load_training_epochs()
         # store all weight layers
         self.layers = {}
-        self.epochs = Set()
-        self.reps = Set()
+        self.epochs = []
+        self.reps = []
         for rep, epoch, ckpt in ckpt_source:
             self.epochs.add(epoch)
             self.reps.add(rep)
@@ -32,9 +32,9 @@ class PlotWeights():
             for layer_name, layer in state_dict.items():
                 self.layers[rep][epoch][layer_name] = layer
             print(f'm={rep}, ep={epoch}, p={len(state_dict)}, t={time.perf_counter() - start_time}')
-        self.epochs = sorted(list(self.epochs))
-        self.reps = sorted(list(self.reps))
-        print(f'Models loaded.')
+        self.epochs = sorted(set(self.epochs))
+        self.reps = sorted(set(self.reps))
+        print(f'Models loaded: replicates=\n{self.reps} \nepochs=\n{self.epochs}.')
 
     def _load_noise_epochs(self, subdir):
         for ckpt, name in self.job.load_checkpoints_from_dir(
@@ -58,9 +58,9 @@ class PlotWeights():
         if type(name_contains) is str:
             name_contains = [name_contains]
         if len(epochs) == 0:  # include all
-            epochs = np.arange(self.job.n_epochs)
+            epochs = self.epochs
         if len(replicates) == 0:  # include all
-            replicates = np.arange(self.job.n_replicates)
+            replicates = self.reps
 
         print(f'Filtering replicates={replicates}, epochs={epochs}, names={name_contains}...')
         n_layers = 0
@@ -112,14 +112,14 @@ class PlotWeights():
             name_contains = [name_contains]
         data = [self.retrieve_layers(replicates=i,
                     epochs=last_epoch, name_contains=name_contains)
-                for i in range(self.job.n_replicates)]
+                for i in self.reps]
         self.plot_histograms(data, 'hist_by_init_' + '-'.join(name_contains) + '.png')
 
     def hist_layers_by_epoch(self, name_contains=[]):
         if type(name_contains) is str:
             name_contains = [name_contains]
         data = [self.retrieve_layers(epochs=i, name_contains=name_contains)
-            for i in range(self.job.n_epochs)]
+            for i in self.epochs]
         self.plot_histograms(data, 'hist_by_epoch_' + '-'.join(name_contains) + '.png')
 
     def hist_layers(self, name_contains=[]):
