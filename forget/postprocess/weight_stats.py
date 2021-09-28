@@ -2,6 +2,7 @@ import os
 import time
 import torch
 import numpy as np
+from collections import Set
 from matplotlib import pyplot as plt
 
 class PlotWeights():
@@ -10,12 +11,18 @@ class PlotWeights():
         print(f'Loading models...')
         self.job = job
         if noise_subdir is not None:
+            self.noise_subdir = noise_subdir
             ckpt_source = self._load_noise_epochs(noise_subdir)
         else:
+            self.noise_subdir = '==TRAIN=='
             ckpt_source = self._load_training_epochs()
         # store all weight layers
         self.layers = {}
+        self.epochs = Set()
+        self.reps = Set()
         for rep, epoch, ckpt in ckpt_source:
+            self.epochs.add(epoch)
+            self.reps.add(rep)
             if rep not in self.layers:
                 self.layers[rep] = {}
             if epoch not in self.layers[rep]:
@@ -23,8 +30,10 @@ class PlotWeights():
             start_time = time.perf_counter()
             state_dict = ckpt['model_state_dict']
             for layer_name, layer in state_dict.items():
-                self.layers[epoch][rep][layer_name] = layer
+                self.layers[rep][epoch][layer_name] = layer
             print(f'm={rep}, ep={epoch}, p={len(state_dict)}, t={time.perf_counter() - start_time}')
+        self.epochs = sorted(list(self.epochs))
+        self.reps = sorted(list(self.reps))
         print(f'Models loaded.')
 
     def _load_noise_epochs(self, subdir):
@@ -95,10 +104,10 @@ class PlotWeights():
                     ax.set_title(cols[j])
                 if j == 0:
                     ax.set_ylabel(rows[i])
-        self.job.save_obj_to_subdir(plt, 'weight_histograms', filename)
+        self.job.save_obj_to_subdir(plt, f'weight_hist_{self.noise_subdir}', filename)
 
     def hist_layers_by_init(self, name_contains=[]):
-        last_epoch = self.job.n_epochs - 1  # use last epoch
+        last_epoch = self.epochs[-1]  # use last epoch
         if type(name_contains) is str:
             name_contains = [name_contains]
         data = [self.retrieve_layers(replicates=i,
