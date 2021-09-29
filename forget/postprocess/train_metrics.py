@@ -151,11 +151,6 @@ class PlotTraining():
         else:
             return ndarray
 
-    def plot_label_dist(self):
-        values, counts = np.unique(self.labels, return_counts=True)
-        plt.bar(values, counts)
-        self.job.save_obj_to_subdir(plt, 'metrics', self.include_examples + '_label_dist')
-
     def prob_by_iter(self, replicate):
         base_dir = os.path.join(self.job.save_path, f'model{replicate}')
         for epoch in range(1, self.job.n_epochs):
@@ -165,70 +160,77 @@ class PlotTraining():
             for train_batch_idx, prob in enumerate(probs):
                 yield self._train_eval_filter(prob), train_batch_idx
 
-    def plot_scores_and_rank_corr(self, output_to_score_fn, metric_fn):
-        name = self.include_examples + '_' + metric_fn.__name__
-        print(f'Scoring {name} over replicates...')
-        metrics = []
+    def plot_label_dist(self):
+        values, counts = np.unique(self.labels, return_counts=True)
+        plt.bar(values, counts)
+        self.job.save_obj_to_subdir(plt, 'metrics', self.include_examples + '_label_dist')
+
+    def generate_scores(self, score_fn):
+        # reduces output dimensionality from (R x I x N x C) to (R x I x N)
+        # by calculating score_fn over C classes
+        print(f'Scoring {score_fn.__name__} over replicates...')
+        scores = []
         for i in range(self.job.n_replicates):
             start_time = time.perf_counter()
-            scores = [output_to_score_fn(prob, self.labels)
-                for prob, _ in self.prob_by_iter(i)]
-            scores = np.stack(scores, axis=0)
-            metric = metric_fn(scores)
-            metrics.append(metric)
-            print(f'm={i}, score:{stats_str(scores)} ' + \
-                f'metric: {stats_str(metrics)} t={time.perf_counter() - start_time}')
-        self.plot_ordered_scores_by_rep(metrics, name)
+            score = [score_fn(prob, self.labels) for prob, _ in self.prob_by_iter(i)]
+            scores.append(np.stack(score, axis=0))
+            print(f'm={i} s:{stats_str(scores)} t={time.perf_counter() - start_time}')
+        return np.stack(scores, axis=0)
+
+    def generate_metrics(self, scores, metric_fn):
+        # reduces output dimensionality from (R x I x N) to (R x N) by
+        # calculating metric_fn over I iterations
+        name = self.include_examples + '_' + metric_fn.__name__
+        print(f'Metric {name} over replicates...')
+        metrics = []
+        for i, score in enumerate(scores):
+            start_time = time.perf_counter()
+            metrics.append(metric_fn(score))
+            print(f'm={i}, metric:{stats_str(metrics)} t={time.perf_counter() - start_time}')
         return np.stack(metrics, axis=0)
 
-    def plot_ordered_scores_by_rep(self, metrics, name):
-        start_time = time.perf_counter()
-        n_samples = len(metrics[0])
-        rank = np.arange(n_samples)
-        # spearmanr returns (rho, p-value), ignore the p-value
-        correlations = [spearmanr(a, b)[0] for a, b in zip(metrics[:-1], metrics[1:])]
-        print(f'Rank correlations calculated t={time.perf_counter() - start_time}, plotting...')
+    def plot_correctness_trajectories(self, correctness_scores):
+        for replicate in correctness_scores:
+            for example in replicate.transpose():
+                plt.plot(example, linewidth=0.5, alpha=0.1)
+        self.job.save_obj_to_subdir(plt, 'metrics', f'training_trajectories_{replicate}')
 
-        # plot sorted metrics as lines
-        fig, (line_plt, box_plt) = plt.subplots(1, 2, figsize=(16, 8),
-                                    gridspec_kw={'width_ratios': [2, 1]})
-        colors = plt.cm.jet(np.linspace(0., 1., n_samples))
-        for i, metric in enumerate(metrics):
-            line_plt.plot(rank, np.sort(metric), color=colors[i], alpha=0.4)
-        line_plt.set_title(name)
-        # plot rank correlations as box plot
-        box_plt.boxplot(correlations)
-        # also plot individual correlations and p-values as scatter with jitter
-        jitter = np.random.normal(1, 0.05, len(correlations))
-        box_plt.plot(jitter, correlations, '.', alpha=0.4)
-        box_plt.set_title('Spearman rho')
-        self.job.save_obj_to_subdir(plt, 'metrics', name)
+    def plot_metric_rank_qq(self, dict_metrics):
+        for name, metrics in dict_metrics.items():
+            n_samples = len(metrics[0])
+            rank = np.arange(n_samples)
+            # plot sorted metrics as lines
+            colors = plt.cm.jet(np.linspace(0., 1., n_samples))
+            for i, metric in enumerate(metrics):
+                plt.plot(rank, np.sort(metric), color=colors[i], alpha=0.4)
+            plt.set_title(name)
+            self.job.save_obj_to_subdir(plt, 'metrics', name)
 
-    def scores_to_ranks(self, scores):
+    def metrics_to_ranks(self, metrics):
         # assume dimensions are (replicates, examples)
-        n_rep, n_example = scores.shape
-        sorted_idx = np.argsort(scores, axis=1)
+        n_rep, n_example = metrics.shape
+        sorted_idx = np.argsort(metrics, axis=1)
         rep_idx = np.arange(n_rep).reshape(n_rep, 1).repeat(n_example, axis=1)
         rank_idx = np.arange(n_example).reshape(1, n_example).repeat(n_rep, axis=0)
         ranks = np.empty_like(sorted_idx)
         ranks[rep_idx, sorted_idx] = rank_idx
         return ranks
 
-    def plot_orders_to_scores(self, dict_scores):
-        # take dict of {name: score}, plot every combination of mean(scoreA) to scoreB
-        # also include ranked versions of each score
-        names, orders, scores = [], [], []
-        for name, score in dict_scores.items():
+    def plot_metric_array(self, dict_metrics):
+        # take dict of {name: metric}, plot every combination of mean(metricA) to metricB
+        # also include ranked versions of each metric
+        names, orders, metrics = [], [], []
+        for name, metric in dict_metrics.items():
             names.append(name)
-            scores.append(score)
-            orders.append(np.mean(score, axis=0))  # average over replicates
+            metrics.append(metric)
+            orders.append(np.mean(metric, axis=0))  # average over replicates
             # rank version
             names.append(name + '_rank')
-            rank = self.scores_to_ranks(score)
-            scores.append(rank)
+            rank = self.metrics_to_ranks(metric)
+            metrics.append(rank)
             orders.append(np.mean(rank, axis=0))  # average over replicates
-        # scatter plot for every combination of order, score
-        n_rep = scores[0].shape[0]
+        # scatter plot for every combination of order, metric
+        n_rep = metrics[0].shape[0]
         n_plt = max(len(names), 2)
         fig, axes = plt.subplots(n_plt, n_plt, figsize=(3 * n_plt, 3 *n_plt))
         for i, (name_row, row) in enumerate(zip(names, axes)):
@@ -239,57 +241,63 @@ class PlotTraining():
                     ax.set_ylabel(name_row)
                 if i <= j:
                     x_data = orders[i].reshape(1, -1).repeat(n_rep, axis=0)
-                    y_data = scores[j]
+                    y_data = metrics[j]
                     ax.set_xlabel('mean_' + name_col)
                 else:
-                    x_data = scores[i]
-                    y_data = scores[j]
+                    x_data = metrics[i]
+                    y_data = metrics[j]
                 ax.scatter(x_data.flatten(), y_data.flatten(), s=4, alpha=0.2)
         self.job.save_obj_to_subdir(plt, 'metrics',
-            self.include_examples + '_score_rank_' + '-'.join(names))
+            self.include_examples + '_metric_rank_' + '-'.join(names))
 
-    def pairwise_scores_rank_corr(self, dict_scores):
-        # take dict of {name: score}
-        # do pairwise rank correlation between two scores for each replicate
-        # if between the same score and itself, find correlation between replicates
-        # also include rank correlation with mean scores
-        names, scores = [], []
-        for name, score in dict_scores.items():
+    def metric_rank_corr_array(self, dict_metrics):
+        # take dict of {name: metric}
+        # do pairwise rank correlation between two metrics for each replicate
+        # if between the same metric and itself, find correlation between replicates
+        # also include rank correlation with mean metrics
+        names, metrics = [], []
+        for name, metric in dict_metrics.items():
             names.append(name)
-            scores.append(score)
-            # mean scores over replicates
+            metrics.append(metric)
+            # mean metrics over replicates
             names.append(name + '_mean')
-            scores.append(np.mean(score, axis=0))
+            metrics.append(np.mean(metric, axis=0))
         n_plt = max(len(names), 2)
         fig, axes = plt.subplots(n_plt, n_plt, figsize=(3 * n_plt, 3 *n_plt))
-        for i, (name1, score1, row) in enumerate(zip(names, scores, axes)):
-            for j, (name2, score2, ax) in enumerate(zip(names, scores, row)):
-                if i == j:  # do pairwise over same score, multiple replicates
+        for i, (name1, metric1, row) in enumerate(zip(names, metrics, axes)):
+            for j, (name2, metric2, ax) in enumerate(zip(names, metrics, row)):
+                if i == j:  # do pairwise over same metric, multiple replicates
                     # spearmanr returns (rho, p-value), ignore the p-value
-                    correlations = [spearmanr(a, b)[0] for a, b in zip(score1[:-1], score1[1:])]
-                else:  # do pairwise rank corr between two scores, per replicate
-                    correlations = [spearmanr(a, b)[0] for a, b in zip(score1, score2)]
+                    correlations = [spearmanr(a, b)[0] for a, b in zip(metric1[:-1], metric1[1:])]
+                else:  # do pairwise rank corr between two metrics, per replicate
+                    correlations = [spearmanr(a, b)[0] for a, b in zip(metric1, metric2)]
                 # plot rank correlations as box plot
                 ax.boxplot(correlations)
                 if i == 0:
                     ax.set_title(name2)
                 if j == 0:
                     ax.set_ylabel(name1)
-                ax.ylim(0., 1.)
+                ax.set_ylim(0., 1.)
                 # also plot individual correlations and p-values as scatter with jitter
                 jitter = np.random.normal(1, 0.05, len(correlations))
                 ax.plot(jitter, correlations, '.', alpha=0.4)
         self.job.save_obj_to_subdir(plt, 'metrics',
-            self.include_examples + '_score_rho_corr_' + '-'.join(names))
+            self.include_examples + '_metric_rho_corr_' + '-'.join(names))
 
     def batch_forgetting(self, output_prob_by_iter):  # as implemented by Toneva, same as Nikhil'ss
         return forgetting_events(output_prob_by_iter, batch_mask=self.batch_mask)
 
     def plot_forget_auc_diff_ranks(self):
         self.plot_label_dist()
-        auc = self.plot_scores_and_rank_corr(outputs_to_correctness, top_1_auc)
-        diff = self.plot_scores_and_rank_corr(outputs_to_correctness, diff_norm)
-        self.pairwise_scores_rank_corr({'auc': auc, 'diff': diff})
-        self.plot_orders_to_scores({'auc': auc, 'diff': diff})
-        # self.plot_scores_and_rank_corr(outputs_to_correctness, forgetting_events)
-        # self.plot_scores_and_rank_corr(outputs_to_correctness, self.batch_forgetting)
+        # score derived from output probabilities
+        correctness = self.generate_scores(outputs_to_correctness)
+        self.plot_correctness_trajectories(correctness)
+        # metrics derived from scores
+        auc = self.generate_metrics(correctness, top_1_auc)
+        diff = self.generate_metrics(correctness, diff_norm)
+        # TODO forgetting
+        # forgetting = self.generate_metrics(correctness, forgetting_events)
+        # batch_forgetting = self.generate_metrics(correctness, self.batch_forgetting)
+        self.plot_metric_rank_qq({'auc': auc, 'diff': diff})
+        self.metric_rank_corr_array({'auc': auc, 'diff': diff})
+        self.plot_metric_array({'auc': auc, 'diff': diff})
