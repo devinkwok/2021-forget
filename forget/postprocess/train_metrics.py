@@ -1,9 +1,8 @@
 import os
-import math
 import time
 import typing
-import numpy as np
 import torch
+import numpy as np
 from scipy.stats import spearmanr
 import matplotlib.pyplot as plt
 
@@ -166,8 +165,8 @@ class PlotTraining():
             for train_batch_idx, prob in enumerate(probs):
                 yield self._train_eval_filter(prob), train_batch_idx
 
-    def rank_scores_and_plot(self, output_to_score_fn, metric_fn):
-        name = metric_fn.__name__
+    def plot_scores_and_rank_corr(self, output_to_score_fn, metric_fn):
+        name = self.include_examples + '_' + metric_fn.__name__
         print(f'Scoring {name} over replicates...')
         metrics = []
         for i in range(self.job.n_replicates):
@@ -179,7 +178,10 @@ class PlotTraining():
             metrics.append(metric)
             print(f'm={i}, score:{stats_str(scores)} ' + \
                 f'metric: {stats_str(metrics)} t={time.perf_counter() - start_time}')
+        self.plot_ordered_scores_by_rep(metrics, name)
+        return np.stack(metrics, axis=0)
 
+    def plot_ordered_scores_by_rep(self, metrics, name):
         start_time = time.perf_counter()
         n_samples = len(metrics[0])
         rank = np.arange(n_samples)
@@ -200,14 +202,58 @@ class PlotTraining():
         jitter = np.random.normal(1, 0.05, len(correlations))
         box_plt.plot(jitter, correlations, '.', alpha=0.4)
         box_plt.set_title('Spearman rho')
-        self.job.save_obj_to_subdir(plt, 'metrics', self.include_examples + '_' + name)
+        self.job.save_obj_to_subdir(plt, 'metrics', name)
+
+    def scores_to_ranks(self, scores):
+        # assume dimensions are (replicates, examples)
+        n_rep, n_example = scores.shape
+        sorted_idx = np.argsort(scores, axis=1)
+        rep_idx = np.arange(n_rep).reshape(n_rep, 1).repeat(n_example, axis=1)
+        rank_idx = np.arange(n_example).reshape(1, n_example).repeat(n_rep, axis=0)
+        ranks = np.empty_like(sorted_idx)
+        ranks[rep_idx, sorted_idx] = rank_idx
+        return ranks
+
+    def plot_orders_to_scores(self, dict_scores):
+        # take dict of {name: score}, plot every combination of mean(scoreA) to scoreB
+        # also include ranked versions of each score
+        names, orders, scores = [], [], []
+        for name, score in dict_scores.items():
+            names.append(name)
+            scores.append(score)
+            orders.append(np.mean(score, axis=0))  # average over replicates
+            # rank version
+            names.append(name + '_rank')
+            rank = self.scores_to_ranks(score)
+            scores.append(rank)
+            orders.append(np.mean(rank, axis=0))  # average over replicates
+        # scatter plot for every combination of order, score
+        n_rep = scores[0].shape[0]
+        n_plt = max(len(names), 2)
+        fig, axes = plt.subplots(n_plt, n_plt, figsize=(3 * n_plt, 3 *n_plt))
+        for i, (name_row, row) in enumerate(zip(names, axes)):
+            for j, (name_col, ax) in enumerate(zip(names, row)):
+                if i == 0:
+                    ax.set_title(name_col)
+                if j == 0:
+                    ax.set_ylabel(name_row)
+                if i == j:
+                    x_data = orders[i].reshape(1, -1).repeat(n_rep, axis=0)
+                    y_data = scores[i]
+                else:
+                    x_data = scores[i]
+                    y_data = scores[j]
+                ax.scatter(x_data.flatten(), y_data.flatten())
+        self.job.save_obj_to_subdir(plt, 'metrics',
+            self.include_examples + '_score_rank_' + '-'.join(names))
 
     def batch_forgetting(self, output_prob_by_iter):  # as implemented by Toneva, same as Nikhil'ss
         return forgetting_events(output_prob_by_iter, batch_mask=self.batch_mask)
 
     def plot_forget_auc_diff_ranks(self):
         self.plot_label_dist()
-        self.rank_scores_and_plot(outputs_to_correctness, top_1_auc)
-        self.rank_scores_and_plot(outputs_to_correctness, diff_norm)
-        # self.rank_scores_and_plot(outputs_to_correctness, forgetting_events)
-        # self.rank_scores_and_plot(outputs_to_correctness, self.batch_forgetting)
+        auc = self.plot_scores_and_rank_corr(outputs_to_correctness, top_1_auc)
+        diff = self.plot_scores_and_rank_corr(outputs_to_correctness, diff_norm)
+        self.plot_orders_to_scores({'auc': auc, 'diff': diff})
+        # self.plot_scores_and_rank_corr(outputs_to_correctness, forgetting_events)
+        # self.plot_scores_and_rank_corr(outputs_to_correctness, self.batch_forgetting)
