@@ -169,7 +169,7 @@ class PlotTraining():
                     yield prob
         else:
             name = f'logits-model{self.noise_model}-noise{replicate}.pt'
-            file = os.path.join(self.job.save_path, self.noise_dir, name)
+            file = os.path.join(self.job.save_path, 'logits_' + self.noise_dir, name)
             logits = torch.load(file, map_location=torch.device('cpu'))['logit']
             for prob in self.logits_by_iter(logits):
                 yield prob

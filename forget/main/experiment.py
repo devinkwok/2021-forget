@@ -94,7 +94,7 @@ class run_experiment:
             """Plot auc, diff, and forgetting ranks
             """
 
-            logit_subdirs = ['', 'logits_noise_additive', 'logits_noise_additive_conv']
+            logit_subdirs = ['', 'noise_additive_conv']
 
             # generate metrics
             for subdir in logit_subdirs:
