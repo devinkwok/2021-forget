@@ -1,4 +1,4 @@
- os
+import os
 import time
 import typing
 import torch
@@ -144,6 +144,10 @@ class PlotTraining():
         self.noise_dir = noise_dir
         self.noise_model = noise_model
         self.include_examples = 'all'
+        if self.noise_dir == '':
+            self.name = ''
+        else:
+            self.name = f'{self.noise_dir}-{self.noise_model}'
 
     def _train_eval_filter(self, ndarray):  # applies to metrics with N as last dim
         split_point = int(self.job.hparams['eval number of train examples'])
@@ -158,17 +162,24 @@ class PlotTraining():
         #TODO hack to plot noise logits
         if self.noise_dir == '':
             base_dir = os.path.join(self.job.save_path, f'model{replicate}')
+            for epoch in range(1, self.job.n_epochs):
+                file = os.path.join(base_dir, f'eval_logits={epoch}.pt')
+                logits = torch.load(file, map_location=torch.device('cpu'))
+                for prob in self.logits_by_iter(logits):
+                    yield prob
         else:
-            base_dir = os.path.join(self.job.save_path,
-                self.noise_dir, f'logits-model{self.noise_model}-noise{replicate}')
+            name = f'logits-model{self.noise_model}-noise{replicate}.pt'
+            file = os.path.join(self.job.save_path, self.noise_dir, name)
+            logits = torch.load(file, map_location=torch.device('cpu'))['logit']
+            for prob in self.logits_by_iter(logits):
+                yield prob
+
+    def logits_by_iter(self, logits):
         # iterate over saved logits in same order as training
-        for epoch in range(1, self.job.n_epochs):
-            with torch.no_grad():
-                logits = torch.load(os.path.join(base_dir, f'eval_logits={epoch}.pt'),
-                                    map_location=torch.device('cpu'))
-                probs = torch.softmax(logits, dim=2).detach().numpy()
-                for train_batch_idx, prob in enumerate(probs):
-                    yield prob, train_batch_idx
+        with torch.no_grad():
+            probs = torch.softmax(logits, dim=2).detach().numpy()
+            for train_batch_idx, prob in enumerate(probs):
+                yield prob, train_batch_idx
 
     def plot_label_dist(self):
         values, counts = np.unique(self.labels, return_counts=True)
@@ -276,7 +287,7 @@ class PlotTraining():
                     y_data = metrics[j]
                 ax.scatter(x_data.flatten(), y_data.flatten(), marker='.', s=4, alpha=0.05)
         self.job.save_obj_to_subdir(plt, 'plot-metrics',
-            self.include_examples + '_metric_rank_' + '-'.join(names))
+            f'{self.include_examples}_metric_rank_{self.name}')
 
     def plot_metric_rank_corr_array(self, dict_metrics):
         # take dict of {name: metric}
@@ -311,20 +322,16 @@ class PlotTraining():
                 jitter = np.random.normal(1, 0.05, len(correlations))
                 ax.plot(jitter, correlations, '.', alpha=0.4)
         self.job.save_obj_to_subdir(plt, 'plot-metrics',
-            self.include_examples + '_metric_rho_corr_' + '-'.join(names))
+            f'{self.include_examples}_metric_rho_corr_{self.name}')
 
     def batch_forgetting(self, output_prob_by_iter):  # as implemented by Toneva, same as Nikhil'ss
         return forgetting_events(output_prob_by_iter, batch_mask=self.batch_mask)
 
     def gen_and_save_metrics(self):
-        if self.noise_dir == '':  #TODO hack for plotting noise
-            name = ''
-        else:
-            name = f'{self.noise-dir}-{self.noise_model}'
         self.plot_label_dist()
         # score derived from output probabilities
         correctness = self.generate_scores(outputs_to_correctness)
-        self.plot_score_trajectories({f'{name}_correct': correctness}, skip=1000)
+        self.plot_score_trajectories({f'{self.name}_correct': correctness}, skip=1000)
         #TODO save raw scores and metrics to avoid repeating steps
         # metrics derived from scores
         auc = self.generate_metrics(correctness, top_1_auc)
@@ -332,8 +339,8 @@ class PlotTraining():
         # # TODO forgetting
         # forgetting = self.generate_metrics(correctness, forgetting_events)
         # batch_forgetting = self.generate_metrics(correctness, self.batch_forgetting)
-        metrics = {f'{name}_auc': auc, f'{name}_diff': diff}
-        self.job.save_obj_to_subdir(metrics, 'metrics', f'metrics_{name}.pt')
+        metrics = {f'{self.name}_auc': auc, f'{self.name}_diff': diff}
+        self.job.save_obj_to_subdir(metrics, 'metrics', f'metrics_{self.name}.pt')
 
     #TODO split metric gen object from metric plot
     def plot_metrics(self, metrics_files, include):
@@ -342,7 +349,7 @@ class PlotTraining():
         # include_examples is in self because plots use it for titles
         self.include_examples = include
         for name in metrics_files:
-            file = os.path.join(self.job.save_path, 'metrics', f'metrics_{name}.pt')
+            file = os.path.join(self.job.save_path, 'metrics', f'metrics_{name}-{self.noise_model}.pt')
             metrics = torch.load(file)
             for name, metric in metrics.items():
                 if name in dict_metrics:  # require unique names
