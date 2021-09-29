@@ -1,4 +1,4 @@
-import os
+ os
 import time
 import typing
 import torch
@@ -134,40 +134,48 @@ def stats_str(array):
 
 class PlotTraining():
 
-    def __init__(self, job, include_examples='all'):
-        print('Plotting', include_examples, '...')
+    def __init__(self, job, noise_dir='', noise_model=0):
         # filter batch by train/test examples
         self.job = job
-        self.include_examples = include_examples
         self.batch_mask = create_ordered_batch_mask(self.job.hparams['batch size'],
                         0, int(self.job.hparams['eval number of train examples']))
-        labels = np.array([y for _, y in self.job.get_eval_dataset()])
-        self.labels = self._train_eval_filter(labels)
+        self.labels = np.array([y for _, y in self.job.get_eval_dataset()])
+        #TODO hack to plot noise logits
+        self.noise_dir = noise_dir
+        self.noise_model = noise_model
+        self.include_examples = 'all'
 
-    def _train_eval_filter(self, ndarray):
+    def _train_eval_filter(self, ndarray):  # applies to metrics with N as last dim
         split_point = int(self.job.hparams['eval number of train examples'])
         if self.include_examples == 'train':
-            return ndarray[:split_point, ...]
+            return ndarray[..., :split_point]
         elif self.include_examples == 'test':
-            return ndarray[split_point:, ...]
+            return ndarray[..., split_point:]
         else:
             return ndarray
 
-    def prob_by_iter(self, replicate):
-        base_dir = os.path.join(self.job.save_path, f'model{replicate}')
+    def iter_logits_to_prob(self, replicate):
+        #TODO hack to plot noise logits
+        if self.noise_dir == '':
+            base_dir = os.path.join(self.job.save_path, f'model{replicate}')
+        else:
+            base_dir = os.path.join(self.job.save_path,
+                self.noise_dir, f'logits-model{self.noise_model}-noise{replicate}')
+        # iterate over saved logits in same order as training
         for epoch in range(1, self.job.n_epochs):
             with torch.no_grad():
                 logits = torch.load(os.path.join(base_dir, f'eval_logits={epoch}.pt'),
                                     map_location=torch.device('cpu'))
                 probs = torch.softmax(logits, dim=2).detach().numpy()
                 for train_batch_idx, prob in enumerate(probs):
-                    yield self._train_eval_filter(prob), train_batch_idx
+                    yield prob, train_batch_idx
 
     def plot_label_dist(self):
         values, counts = np.unique(self.labels, return_counts=True)
         plt.bar(values, counts)
-        self.job.save_obj_to_subdir(plt, 'metrics', self.include_examples + '_label_dist')
+        self.job.save_obj_to_subdir(plt, 'plot-metrics', self.include_examples + '_label_dist')
 
+    #TODO change to apply score_fn to last dim only, use arbitrary dims
     def generate_scores(self, score_fn):
         # reduces output dimensionality from (R x I x N x C) to (R x I x N)
         # by calculating score_fn over C classes
@@ -175,12 +183,14 @@ class PlotTraining():
         scores = []
         for i in range(self.job.n_replicates):
             start_time = time.perf_counter()
-            score = [score_fn(prob, self.labels) for prob, _ in self.prob_by_iter(i)]
+            score = [score_fn(prob, self.labels)
+                    for prob, _ in self.iter_logits_to_prob(i)]
             score = np.stack(score, axis=0)
             scores.append(score)
             print(f'm={i} sc:{stats_str(score)} t={time.perf_counter() - start_time}')
         return np.stack(scores, axis=0)
 
+    #TODO change to apply to last 2 dims only, use arbitrary dims
     def generate_metrics(self, scores, metric_fn):
         # reduces output dimensionality from (R x I x N) to (R x N) by
         # calculating metric_fn over I iterations
@@ -210,8 +220,8 @@ class PlotTraining():
                         plt.plot(example, linewidth=1., alpha=0.2)
                 plt.title(name)
                 print(f'Plotted in t={time.perf_counter() - start_time}')
-                self.job.save_obj_to_subdir(plt, 'metrics',
-                    f'training_trajectories_{name}_{i}')
+                self.job.save_obj_to_subdir(plt, 'plot-metrics',
+                    f'trajectories_{name}_{i}')
 
     def plot_metric_rank_qq(self, dict_metrics):
         for name, metrics in dict_metrics.items():
@@ -222,7 +232,7 @@ class PlotTraining():
             for i, metric in enumerate(metrics):
                 plt.plot(rank, np.sort(metric), color=colors[i], alpha=0.4)
             plt.title(name)
-            self.job.save_obj_to_subdir(plt, 'metrics', name)
+            self.job.save_obj_to_subdir(plt, 'plot-metrics', name)
 
     def metrics_to_ranks(self, metrics):
         # assume dimensions are (replicates, examples)
@@ -234,7 +244,7 @@ class PlotTraining():
         ranks[rep_idx, sorted_idx] = rank_idx
         return ranks
 
-    def plot_metric_array(self, dict_metrics):
+    def plot_metric_scatter_array(self, dict_metrics):
         # take dict of {name: metric}, plot every combination of mean(metricA) to metricB
         # also include ranked versions of each metric
         names, orders, metrics = [], [], []
@@ -264,11 +274,11 @@ class PlotTraining():
                 else:
                     x_data = metrics[i]
                     y_data = metrics[j]
-                ax.scatter(x_data.flatten(), y_data.flatten(), marker='.', s=4, alpha=0.1)
-        self.job.save_obj_to_subdir(plt, 'metrics',
+                ax.scatter(x_data.flatten(), y_data.flatten(), marker='.', s=4, alpha=0.05)
+        self.job.save_obj_to_subdir(plt, 'plot-metrics',
             self.include_examples + '_metric_rank_' + '-'.join(names))
 
-    def metric_rank_corr_array(self, dict_metrics):
+    def plot_metric_rank_corr_array(self, dict_metrics):
         # take dict of {name: metric}
         # do pairwise rank correlation between two metrics for each replicate
         # if between the same metric and itself, find correlation between replicates
@@ -300,23 +310,45 @@ class PlotTraining():
                 # also plot individual correlations and p-values as scatter with jitter
                 jitter = np.random.normal(1, 0.05, len(correlations))
                 ax.plot(jitter, correlations, '.', alpha=0.4)
-        self.job.save_obj_to_subdir(plt, 'metrics',
+        self.job.save_obj_to_subdir(plt, 'plot-metrics',
             self.include_examples + '_metric_rho_corr_' + '-'.join(names))
 
     def batch_forgetting(self, output_prob_by_iter):  # as implemented by Toneva, same as Nikhil'ss
         return forgetting_events(output_prob_by_iter, batch_mask=self.batch_mask)
 
-    def plot_forget_auc_diff_ranks(self):
+    def gen_and_save_metrics(self):
+        if self.noise_dir == '':  #TODO hack for plotting noise
+            name = ''
+        else:
+            name = f'{self.noise-dir}-{self.noise_model}'
         self.plot_label_dist()
         # score derived from output probabilities
         correctness = self.generate_scores(outputs_to_correctness)
-        self.plot_score_trajectories({'correctness': correctness}, skip=1000)
+        self.plot_score_trajectories({f'{name}_correct': correctness}, skip=1000)
+        #TODO save raw scores and metrics to avoid repeating steps
         # metrics derived from scores
         auc = self.generate_metrics(correctness, top_1_auc)
         diff = self.generate_metrics(correctness, diff_norm)
-        # TODO forgetting
+        # # TODO forgetting
         # forgetting = self.generate_metrics(correctness, forgetting_events)
         # batch_forgetting = self.generate_metrics(correctness, self.batch_forgetting)
-        self.plot_metric_rank_qq({'auc': auc, 'diff': diff})
-        self.metric_rank_corr_array({'auc': auc, 'diff': diff})
-        self.plot_metric_array({'auc': auc, 'diff': diff})
+        metrics = {f'{name}_auc': auc, f'{name}_diff': diff}
+        self.job.save_obj_to_subdir(metrics, 'metrics', f'metrics_{name}.pt')
+
+    #TODO split metric gen object from metric plot
+    def plot_metrics(self, metrics_files, include):
+        dict_metrics = {}
+        assert include == 'all' or include == 'train' or include == 'test'
+        # include_examples is in self because plots use it for titles
+        self.include_examples = include
+        for name in metrics_files:
+            file = os.path.join(self.job.save_path, 'metrics', f'metrics_{name}.pt')
+            metrics = torch.load(file)
+            for name, metric in metrics.items():
+                if name in dict_metrics:  # require unique names
+                    raise KeyError(f'Metric {name} already exists, cannot load from {file}')
+                # filter by train/test/all
+                dict_metrics[name] = self._train_eval_filter(metric)
+        self.plot_metric_rank_qq(dict_metrics)
+        self.plot_metric_rank_corr_array(dict_metrics)
+        self.plot_metric_scatter_array(dict_metrics)

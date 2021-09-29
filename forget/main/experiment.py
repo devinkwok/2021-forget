@@ -93,11 +93,16 @@ class run_experiment:
 
             """Plot auc, diff, and forgetting ranks
             """
-            plot_training = PlotTraining(job)
-            plot_training.plot_forget_auc_diff_ranks()
-            plot_training = PlotTraining(job, include_examples='train')
-            plot_training.plot_forget_auc_diff_ranks()
-            plot_training = PlotTraining(job, include_examples='test')
-            plot_training.plot_forget_auc_diff_ranks()
+
+            logit_subdirs = ['', 'logits_noise_additive', 'logits_noise_additive_conv']
+
+            # generate metrics
+            for subdir in logit_subdirs:
+                metric_generator = PlotTraining(job, noise_dir=subdir)
+                metric_generator.gen_and_save_metrics()
+            # plot metrics
+            metric_generator.plot_metrics(logit_subdirs, 'all')
+            metric_generator.plot_metrics(logit_subdirs, 'train')
+            metric_generator.plot_metrics(logit_subdirs, 'test')
 
         print(f"Jobs finished at t={datetime.datetime.now()}")
