@@ -237,15 +237,50 @@ class PlotTraining():
                     ax.set_title(name_col)
                 if j == 0:
                     ax.set_ylabel(name_row)
-                if i == j:
+                if i <= j:
                     x_data = orders[i].reshape(1, -1).repeat(n_rep, axis=0)
-                    y_data = scores[i]
+                    y_data = scores[j]
+                    ax.set_xlabel('mean_' + name_col)
                 else:
                     x_data = scores[i]
                     y_data = scores[j]
-                ax.scatter(x_data.flatten(), y_data.flatten())
+                ax.scatter(x_data.flatten(), y_data.flatten(), s=4, alpha=0.2)
         self.job.save_obj_to_subdir(plt, 'metrics',
             self.include_examples + '_score_rank_' + '-'.join(names))
+
+    def pairwise_scores_rank_corr(self, dict_scores):
+        # take dict of {name: score}
+        # do pairwise rank correlation between two scores for each replicate
+        # if between the same score and itself, find correlation between replicates
+        # also include rank correlation with mean scores
+        names, scores = [], []
+        for name, score in dict_scores.items():
+            names.append(name)
+            scores.append(score)
+            # mean scores over replicates
+            names.append(name + '_mean')
+            scores.append(np.mean(score, axis=0))
+        n_plt = max(len(names), 2)
+        fig, axes = plt.subplots(n_plt, n_plt, figsize=(3 * n_plt, 3 *n_plt))
+        for i, (name1, score1, row) in enumerate(zip(names, scores, axes)):
+            for j, (name2, score2, ax) in enumerate(zip(names, scores, row)):
+                if i == j:  # do pairwise over same score, multiple replicates
+                    # spearmanr returns (rho, p-value), ignore the p-value
+                    correlations = [spearmanr(a, b)[0] for a, b in zip(score1[:-1], score1[1:])]
+                else:  # do pairwise rank corr between two scores, per replicate
+                    correlations = [spearmanr(a, b)[0] for a, b in zip(score1, score2)]
+                # plot rank correlations as box plot
+                ax.boxplot(correlations)
+                if i == 0:
+                    ax.set_title(name2)
+                if j == 0:
+                    ax.set_ylabel(name1)
+                ax.ylim(0., 1.)
+                # also plot individual correlations and p-values as scatter with jitter
+                jitter = np.random.normal(1, 0.05, len(correlations))
+                ax.plot(jitter, correlations, '.', alpha=0.4)
+        self.job.save_obj_to_subdir(plt, 'metrics',
+            self.include_examples + '_score_rho_corr_' + '-'.join(names))
 
     def batch_forgetting(self, output_prob_by_iter):  # as implemented by Toneva, same as Nikhil'ss
         return forgetting_events(output_prob_by_iter, batch_mask=self.batch_mask)
@@ -254,6 +289,7 @@ class PlotTraining():
         self.plot_label_dist()
         auc = self.plot_scores_and_rank_corr(outputs_to_correctness, top_1_auc)
         diff = self.plot_scores_and_rank_corr(outputs_to_correctness, diff_norm)
+        self.pairwise_scores_rank_corr({'auc': auc, 'diff': diff})
         self.plot_orders_to_scores({'auc': auc, 'diff': diff})
         # self.plot_scores_and_rank_corr(outputs_to_correctness, forgetting_events)
         # self.plot_scores_and_rank_corr(outputs_to_correctness, self.batch_forgetting)
