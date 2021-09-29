@@ -189,11 +189,20 @@ class PlotTraining():
             print(f'm={i}, metric:{stats_str(metrics)} t={time.perf_counter() - start_time}')
         return np.stack(metrics, axis=0)
 
-    def plot_correctness_trajectories(self, correctness_scores):
-        for replicate in correctness_scores:
-            for example in replicate.transpose():
-                plt.plot(example, linewidth=0.5, alpha=0.1)
-        self.job.save_obj_to_subdir(plt, 'metrics', f'training_trajectories_{replicate}')
+    def plot_score_trajectories(self, dict_scores):
+        for name, scores in dict_scores.items():
+            for i, replicate in enumerate(scores):
+                f = plt.figure()
+                f.set_figwidth(16)
+                f.set_figheight(8)
+                print(f'Plotting trajectories for {name} replicate {i}...')
+                start_time = time.perf_counter()
+                for example in replicate.transpose():
+                    plt.plot(example, linewidth=0.8, alpha=0.1)
+                plt.title(name)
+                print(f'Plotted in t={time.perf_counter() - start_time}')
+                self.job.save_obj_to_subdir(plt, 'metrics',
+                    f'training_trajectories_{name}_{i}')
 
     def plot_metric_rank_qq(self, dict_metrics):
         for name, metrics in dict_metrics.items():
@@ -203,7 +212,7 @@ class PlotTraining():
             colors = plt.cm.jet(np.linspace(0., 1., n_samples))
             for i, metric in enumerate(metrics):
                 plt.plot(rank, np.sort(metric), color=colors[i], alpha=0.4)
-            plt.set_title(name)
+            plt.title(name)
             self.job.save_obj_to_subdir(plt, 'metrics', name)
 
     def metrics_to_ranks(self, metrics):
@@ -291,7 +300,7 @@ class PlotTraining():
         self.plot_label_dist()
         # score derived from output probabilities
         correctness = self.generate_scores(outputs_to_correctness)
-        self.plot_correctness_trajectories(correctness)
+        self.plot_score_trajectories({'correctness': correctness})
         # metrics derived from scores
         auc = self.generate_metrics(correctness, top_1_auc)
         diff = self.generate_metrics(correctness, diff_norm)
