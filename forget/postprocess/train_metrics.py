@@ -75,7 +75,8 @@ def outputs_to_correctness(output_prob: np.ndarray, tgt_labels: np.ndarray) -> n
     probabilities = output_prob[np.arange(len(tgt_labels)), tgt_labels]
     class_labels = np.argmax(output_prob, axis=1)
     correct_mask = (class_labels == tgt_labels) * 2 - 1
-    return probabilities * correct_mask
+    correctness = probabilities * correct_mask
+    return correctness
 
 def top_1_auc(output_prob_by_iter: typing.List[np.ndarray], divide_by_iters=True) -> np.ndarray:
     """
@@ -128,12 +129,13 @@ def create_ordered_batch_mask(train_batch_size, example_start_idx, example_end_i
     pass #TODO
 
 def stats_str(array):
-    return '<{:0.4f}|{:0.4f}|{:0.4f}>'.format(
-        np.min(array), np.mean(array), np.max(array))
+    return '<{:0.4f}|{:0.4f}|{:0.4f}> {}'.format(
+        np.min(array), np.mean(array), np.max(array), array.shape)
 
 class PlotTraining():
 
     def __init__(self, job, include_examples='all'):
+        print('Plotting', include_examples, '...')
         # filter batch by train/test examples
         self.job = job
         self.include_examples = include_examples
@@ -154,11 +156,12 @@ class PlotTraining():
     def prob_by_iter(self, replicate):
         base_dir = os.path.join(self.job.save_path, f'model{replicate}')
         for epoch in range(1, self.job.n_epochs):
-            logits = torch.load(os.path.join(base_dir, f'eval_logits={epoch}.pt'),
-                                map_location=torch.device('cpu'))
-            probs = torch.softmax(logits, dim=2)
-            for train_batch_idx, prob in enumerate(probs):
-                yield self._train_eval_filter(prob), train_batch_idx
+            with torch.no_grad():
+                logits = torch.load(os.path.join(base_dir, f'eval_logits={epoch}.pt'),
+                                    map_location=torch.device('cpu'))
+                probs = torch.softmax(logits, dim=2).detach().numpy()
+                for train_batch_idx, prob in enumerate(probs):
+                    yield self._train_eval_filter(prob), train_batch_idx
 
     def plot_label_dist(self):
         values, counts = np.unique(self.labels, return_counts=True)
@@ -173,8 +176,9 @@ class PlotTraining():
         for i in range(self.job.n_replicates):
             start_time = time.perf_counter()
             score = [score_fn(prob, self.labels) for prob, _ in self.prob_by_iter(i)]
-            scores.append(np.stack(score, axis=0))
-            print(f'm={i} s:{stats_str(scores)} t={time.perf_counter() - start_time}')
+            score = np.stack(score, axis=0)
+            scores.append(score)
+            print(f'm={i} sc:{stats_str(score)} t={time.perf_counter() - start_time}')
         return np.stack(scores, axis=0)
 
     def generate_metrics(self, scores, metric_fn):
@@ -185,20 +189,25 @@ class PlotTraining():
         metrics = []
         for i, score in enumerate(scores):
             start_time = time.perf_counter()
-            metrics.append(metric_fn(score))
-            print(f'm={i}, metric:{stats_str(metrics)} t={time.perf_counter() - start_time}')
+            metric = metric_fn(score)
+            metrics.append(metric)
+            print(f'm={i}, mt:{stats_str(metric)} t={time.perf_counter() - start_time}')
         return np.stack(metrics, axis=0)
 
-    def plot_score_trajectories(self, dict_scores):
+    def plot_score_trajectories(self, dict_scores, skip=1):
         for name, scores in dict_scores.items():
             for i, replicate in enumerate(scores):
+                replicate = replicate.transpose()  # put N dim before I
+                n_examples = replicate.shape[0]
+                print(f'Plotting trajectories for {name} replicate {i}...')
+                start_time = time.perf_counter()
                 f = plt.figure()
                 f.set_figwidth(16)
                 f.set_figheight(8)
-                print(f'Plotting trajectories for {name} replicate {i}...')
-                start_time = time.perf_counter()
-                for example in replicate.transpose():
-                    plt.plot(example, linewidth=0.8, alpha=0.1)
+                plt.ylim(-1., 1.)
+                for j, example in enumerate(replicate):
+                    if j % skip == 0:
+                        plt.plot(example, linewidth=1., alpha=0.2)
                 plt.title(name)
                 print(f'Plotted in t={time.perf_counter() - start_time}')
                 self.job.save_obj_to_subdir(plt, 'metrics',
@@ -255,7 +264,7 @@ class PlotTraining():
                 else:
                     x_data = metrics[i]
                     y_data = metrics[j]
-                ax.scatter(x_data.flatten(), y_data.flatten(), s=4, alpha=0.2)
+                ax.scatter(x_data.flatten(), y_data.flatten(), marker='.', s=4, alpha=0.1)
         self.job.save_obj_to_subdir(plt, 'metrics',
             self.include_examples + '_metric_rank_' + '-'.join(names))
 
@@ -265,10 +274,10 @@ class PlotTraining():
         # if between the same metric and itself, find correlation between replicates
         # also include rank correlation with mean metrics
         names, metrics = [], []
-        n_rep = metrics[0].shape[0]
         for name, metric in dict_metrics.items():
             names.append(name)
             metrics.append(metric)
+            n_rep = metric.shape[0]
             # mean metrics over replicates
             names.append(name + '_mean')
             metrics.append(np.mean(metric, axis=0).reshape(1, -1).repeat(n_rep, axis=0))
@@ -301,7 +310,7 @@ class PlotTraining():
         self.plot_label_dist()
         # score derived from output probabilities
         correctness = self.generate_scores(outputs_to_correctness)
-        self.plot_score_trajectories({'correctness': correctness})
+        self.plot_score_trajectories({'correctness': correctness}, skip=1000)
         # metrics derived from scores
         auc = self.generate_metrics(correctness, top_1_auc)
         diff = self.generate_metrics(correctness, diff_norm)
