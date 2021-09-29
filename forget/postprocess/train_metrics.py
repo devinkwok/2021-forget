@@ -74,8 +74,8 @@ def outputs_to_correctness(output_prob: np.ndarray, tgt_labels: np.ndarray) -> n
     """
     probabilities = output_prob[np.arange(len(tgt_labels)), tgt_labels]
     class_labels = np.argmax(output_prob, axis=1)
-    probabilities[class_labels != tgt_labels] *= -1
-    return probabilities
+    correct_mask = (class_labels == tgt_labels) * 2 - 1
+    return probabilities * correct_mask
 
 def top_1_auc(output_prob_by_iter: typing.List[np.ndarray], divide_by_iters=True) -> np.ndarray:
     """
@@ -265,12 +265,13 @@ class PlotTraining():
         # if between the same metric and itself, find correlation between replicates
         # also include rank correlation with mean metrics
         names, metrics = [], []
+        n_rep = metrics[0].shape[0]
         for name, metric in dict_metrics.items():
             names.append(name)
             metrics.append(metric)
             # mean metrics over replicates
             names.append(name + '_mean')
-            metrics.append(np.mean(metric, axis=0))
+            metrics.append(np.mean(metric, axis=0).reshape(1, -1).repeat(n_rep, axis=0))
         n_plt = max(len(names), 2)
         fig, axes = plt.subplots(n_plt, n_plt, figsize=(3 * n_plt, 3 *n_plt))
         for i, (name1, metric1, row) in enumerate(zip(names, metrics, axes)):
