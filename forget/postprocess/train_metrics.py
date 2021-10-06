@@ -86,15 +86,20 @@ class GenerateMetrics():
         # batch forgetting can't be calculated per epoch, change to (R x 1 x EI x N)
         s_prob_no_epoch = s_prob.reshape(-1, 1, n_epoch * n_iter, n_example)
         # summarizes over I for (R x E x N)
-        metrics_by_epoch = {
+        metrics = {
             'sgd_mean_prob': self.transform_collate('sgd', s_prob, mean_prob),
             'sgd_diff_norm': self.transform_collate('sgd', s_prob, diff_norm),
             'sgd_forgetting': self.transform_collate('sgd', s_prob_no_epoch, forgetting_events),
             'sgd_batch_forgetting': self.transform_collate('sgd', s_prob_no_epoch, self.batch_forgetting),
         }
+        metrics_by_epoch = {
+            'sgd_mean_prob': self.transform_collate('sgd', s_prob, mean_prob),
+            'sgd_diff_norm': self.transform_collate('sgd', s_prob, diff_norm),
+            'sgd_forgetting': self.transform_collate('sgd_per_ep', s_prob, forgetting_events),
+        }
         print("Plotting...")
         # plot by train/test/all
-        for example in np.arange(0, 10000, 2000):
+        for example in range(0, 10000, 2000):
             # plot curves for selected examples
             curves = s_prob[..., example:example+1]
             print(curves.shape)
@@ -104,7 +109,7 @@ class GenerateMetrics():
             # transpose to (N x R x EI)
             curves = np.transpose(curves, axes=(2, 0, 1))
             print(curves.shape)
-            plotter.plot_score_curves('sgd_ex' + example, curves)
+            plotter.plot_score_curves('sgd_ex' + str(example), curves)
 
         for include in ['all', 'train', 'test']:
             name = f'-{include}'
@@ -112,7 +117,7 @@ class GenerateMetrics():
             plotter.plot_class_counts(name,
                     self._train_eval_filter(self.labels, include))
             # plot mean over epochs (R x N)
-            plotter.plot_metrics(metrics_by_epoch, name,
+            plotter.plot_metrics(metrics, name,
                 filter=lambda x: np.mean(self._train_eval_filter(x, include), axis=1))
             # plot by epoch
             for i in range(n_epoch):
