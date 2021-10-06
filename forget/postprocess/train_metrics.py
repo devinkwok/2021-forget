@@ -151,19 +151,13 @@ class GenerateMetrics():
         self.force_generate = force_generate
         self.iter_mask = mask_iter_by_batch(self.job.hparams['batch size'],
                         0, int(self.job.hparams['eval number of train examples']))
+        self.labels = np.array([y for _, y in self.job.get_eval_dataset()])
 
     def _transform(self, name, source, transform_fn):
         start_time = time.perf_counter()
         output = transform_fn(source)
         print(f'\t{stats_str(output)} t={time.perf_counter() - start_time} {name}')
         return output
-
-    def _transform_save(self, output, out_file, source_iterable, transform_fn):
-            torch.save({
-                    'source_iterable': source_iterable,
-                    'transform_fn': transform_fn,
-                    'metrics': output,
-                }, out_file)
 
     def _transform_load(self, out_file, source_iterable, transform_fn):
         obj = torch.load(out_file, map_location=torch.device('cpu'))
@@ -181,7 +175,7 @@ class GenerateMetrics():
             if not os.path.exists(out_file) or self.force_generate:
                 print(f'Generating in-place {transform_fn.__name__} from {source_iterable.__name__}:')
                 output = self._transform(source_file, source, transform_fn)
-                self._transform_save(output, out_file, source_iterable, transform_fn)
+                torch.save(output, out_file)
             yield self._transform_load(out_file, source_iterable, transform_fn)
 
     def transform_collate(self, source_iterable, transform_fn):
@@ -192,11 +186,12 @@ class GenerateMetrics():
             print(f'Generating collated {transform_fn.__name__} from {source_iterable.__name__}:')
             outputs = [self._transform(source_file, source, transform_fn)
                                 for source_file, source in source_iterable]
-            self._transform_save(np.stack(outputs, axis=0))
+            torch.save(np.stack(outputs, axis=0), out_file)
         return self._transform_load(out_file, source_iterable, transform_fn)
 
     def replicate_by_epoch(self, model_dir, prefix='eval_logits'):  # source_iter
-        for i in range(self.job.n_epochs()):
+        # logits are saved after epochs, hence index from 1
+        for i in range(1, self.job.n_epochs + 1):
             file = os.path.join(model_dir, f'{prefix}={i}.pt')
             outputs = torch.load(file, map_location=torch.device('cpu'))
             yield file, outputs
@@ -216,16 +211,17 @@ class GenerateMetrics():
         else:
             return ndarray
 
+    def signed_prob(self, x):
+        return signed_prob(x, self.labels)
+
     def gen_train_metrics_by_epoch(self):
         plotter = PlotMetrics(self.job)
-        labels = np.array([y for _, y in self.job.get_eval_dataset()])
         # R * E * (I x N x C) (list of R iterators over E)
         # R is replicates, E is epochs, I iters, N examples, C classes
         softmaxes = [self.transform_inplace(self.replicate_by_epoch(r),
-                        softmax) for r in self.job.replicate_dirs()]
+                        softmax) for r, _ in self.job.replicate_dirs()]
         # collate over E and transform over C to get R * (E x I x N)
-        s_prob = [self.transform_collate(s,
-                lambda x: signed_prob(x, labels)) for s in softmaxes]
+        s_prob = [self.transform_collate(s, self.signed_prob) for s in softmaxes]
         s_prob = np.stack(s_prob, axis=0)  # stack to (R x E x I x N)
         n_epoch, n_iter, n_example = s_prob.shape[-3], s_prob.shape[-2], s_prob.shape[-1]
         # plot curves for selected examples
@@ -246,7 +242,8 @@ class GenerateMetrics():
         for include in ['all', 'train', 'test']:
             name = f'-{include}'
             # label distribution
-            plotter.plot_class_counts(name, self._train_eval_filter(labels, include))
+            plotter.plot_class_counts(name,
+                    self._train_eval_filter(self.labels, include))
             # plot mean over epochs (R x N)
             plotter.plot_metrics(metrics_by_epoch, name,
                 filter=lambda x: np.mean(self._train_eval_filter(x, include), axis=1))
