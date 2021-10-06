@@ -159,35 +159,28 @@ class GenerateMetrics():
         print(f'\t{stats_str(output)} t={time.perf_counter() - start_time} {name}')
         return output
 
-    def _transform_load(self, out_file, source_iterable, transform_fn):
-        obj = torch.load(out_file, map_location=torch.device('cpu'))
-        # check that generating functions weren't changed since last save
-        if obj['source_iterable'] == source_iterable \
-                and obj['transform_fn'] == transform_fn:
-            return obj['metrics']
-        raise ValueError(f"{str(obj['source_iterable'])}, {str(obj['transform_fn'])}' \
-            + 'don't match {str(source_iterable)}, {str(transform_fn)}. Try `force_generate=True`?")
-
-    def transform_inplace(self, source_iterable, transform_fn):
-        for source_file, source in source_iterable:
+    def transform_inplace(self, source_file_iterable, transform_fn):
+        for source_file, source in source_file_iterable:
             source_path, ext = os.path.splitext(source_file)
             out_file = source_path + '-' + transform_fn.__name__ + ext
             if not os.path.exists(out_file) or self.force_generate:
-                print(f'Generating in-place {transform_fn.__name__} from {source_iterable.__name__}:')
+                print(f'Generating in-place {transform_fn.__name__} ' + \
+                        'from {source_file_iterable.__name__}:')
                 output = self._transform(source_file, source, transform_fn)
                 torch.save(output, out_file)
-            yield self._transform_load(out_file, source_iterable, transform_fn)
+            yield torch.load(out_file, map_location=torch.device('cpu'))
 
     def transform_collate(self, source_iterable, transform_fn):
-        out_file = f'{source_iterable.__name__}-{transform_fn.__name__}.metric'
-        path = os.path.join(self.job.save_path, 'metrics', out_file)
+        name = f'{source_iterable.__name__}-{transform_fn.__name__}.metric'
+        out_file = os.path.join(self.job.save_path, 'metrics', name)
         # check if output of transform_fn already exists for source_iterable
         if not os.path.exists(out_file) or self.force_generate:
-            print(f'Generating collated {transform_fn.__name__} from {source_iterable.__name__}:')
-            outputs = [self._transform(source_file, source, transform_fn)
-                                for source_file, source in source_iterable]
+            print(f'Generating collated {transform_fn.__name__} ' + \
+                    'from {source_iterable.__name__}:')
+            outputs = [self._transform(i, source, transform_fn)
+                        for i, source in enumerate(source_iterable)]
             torch.save(np.stack(outputs, axis=0), out_file)
-        return self._transform_load(out_file, source_iterable, transform_fn)
+        return torch.load(out_file, map_location=torch.device('cpu'))
 
     def replicate_by_epoch(self, model_dir, prefix='eval_logits'):  # source_iter
         # logits are saved after epochs, hence index from 1
