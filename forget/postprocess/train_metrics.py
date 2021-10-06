@@ -13,9 +13,8 @@ class GenerateMetrics():
         self.force_generate = force_generate
         eval_dataset = self.job.get_eval_dataset()
         self.labels = np.array([y for _, y in eval_dataset])
-        self.iter_mask = mask_iter_by_batch(self.job.hparams['batch size'],
-            len(self.job.get_train_dataset()), len(self.labels), 0,
-            int(self.job.hparams['eval number of train examples']))
+        self.iter_mask = mask_iter_by_batch(int(self.job.hparams['batch size']),
+            len(self.job.get_train_dataset()), 0, len(self.labels))
 
     def _transform(self, name, source, transform_fn):
         start_time = time.perf_counter()
@@ -57,13 +56,13 @@ class GenerateMetrics():
         pass #TODO
 
     def batch_forgetting(self, output_prob_by_iter):  # as implemented by Toneva, same as Nikhil'ss
-        return forgetting_events(output_prob_by_iter, batch_mask=self.batch_mask)
+        return forgetting_events(output_prob_by_iter, iter_mask=self.iter_mask)
 
     def _train_eval_filter(self, ndarray, split_type):  # applies to metrics with N as last dim
         split_point = int(self.job.hparams['eval number of train examples'])
         if split_type == 'train':
             return ndarray[..., :split_point]
-        elif self.split_type == 'test':
+        elif split_type == 'test':
             return ndarray[..., split_point:]
         else:
             return ndarray
@@ -82,29 +81,36 @@ class GenerateMetrics():
         s_prob = [self.transform_collate(f'sgd_rep{i}', s,
                 self.signed_prob) for i, s in enumerate(softmaxes)]
         s_prob = np.stack(s_prob, axis=0)  # stack to (R x E x I x N)
-        n_epoch, n_iter = s_prob.shape[-3], s_prob.shape[-2]
+        n_epoch, n_iter, n_example = s_prob.shape[-3], s_prob.shape[-2], s_prob.shape[-1]
         print("Loading metrics...")
-        # each metric summarizes over I for (R x E x N)
+        # batch forgetting can't be calculated per epoch, change to (R x 1 x EI x N)
+        s_prob_no_epoch = s_prob.reshape(-1, 1, n_epoch * n_iter, n_example)
+        # summarizes over I for (R x E x N)
         metrics_by_epoch = {
             'sgd_mean_prob': self.transform_collate('sgd', s_prob, mean_prob),
             'sgd_diff_norm': self.transform_collate('sgd', s_prob, diff_norm),
-            'sgd_forgetting': self.generate_metrics(s_prob, forgetting_events),
-            'sgd_batch_forgetting': self.generate_metrics(s_prob, self.batch_forgetting),
+            'sgd_forgetting': self.transform_collate('sgd', s_prob_no_epoch, forgetting_events),
+            'sgd_batch_forgetting': self.transform_collate('sgd', s_prob_no_epoch, self.batch_forgetting),
         }
         print("Plotting...")
         # plot by train/test/all
+        for example in np.arange(0, 10000, 2000):
+            # plot curves for selected examples
+            curves = s_prob[..., example:example+1]
+            print(curves.shape)
+            # reshape to (R x EI x N)
+            curves = curves.reshape(-1, n_epoch * n_iter, curves.shape[-1])
+            print(curves.shape)
+            # transpose to (N x R x EI)
+            curves = np.transpose(curves, axes=(2, 0, 1))
+            print(curves.shape)
+            plotter.plot_score_curves('sgd_ex' + example, curves)
+
         for include in ['all', 'train', 'test']:
             name = f'-{include}'
             # label distribution
             plotter.plot_class_counts(name,
                     self._train_eval_filter(self.labels, include))
-            # plot curves for selected examples
-            curves = self._train_eval_filter(s_prob, include)[..., np.arange(0, 10000, 2000)]
-            # reshape to (R x EI x N)
-            curves = curves.reshape(-1, n_epoch * n_iter, curves.shape[-1])
-            # transpose to (N x R x EI)
-            curves = np.transpose(curves, axes=(2, 0, 1))
-            plotter.plot_score_curves('sgd' + name, curves)
             # plot mean over epochs (R x N)
             plotter.plot_metrics(metrics_by_epoch, name,
                 filter=lambda x: np.mean(self._train_eval_filter(x, include), axis=1))

@@ -38,7 +38,7 @@ class Job():
         print(f'Saving {filename} to {subdir}, t={datetime.datetime.now()}')
         if obj == matplotlib.pyplot:
             obj.savefig(file)
-            plt.figure().close('all')
+            obj.close('all')
         else:
             torch.save(obj, file)
         return file

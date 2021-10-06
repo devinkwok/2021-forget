@@ -27,7 +27,7 @@ class PlotMetrics():
         plt.ylim(-1., 1.)
         plt.title(name)
         # dotted line at 0
-        plt.hlines(0., 0, len(scores), colors='black', linestyles='dotted')
+        plt.hlines(0., 0, scores.shape[-1], colors='black', linestyles='dotted')
         for i, replicate in enumerate(scores):
             color = self._color(i, len(scores))
             for example in replicate:
@@ -80,12 +80,12 @@ class PlotMetrics():
                 if j == 0:
                     ax.set_ylabel(name_row)
                 if i <= j:
-                    x_data = orders[i].reshape(1, -1).repeat(n_rep, axis=0)
-                    y_data = metrics[j]
-                    ax.set_xlabel('mean_' + name_col)
+                    x_data = metrics[j]
+                    y_data = orders[i].reshape(1, -1).repeat(n_rep, axis=0)
+                    ax.set_xlabel('mean')
                 else:
-                    x_data = metrics[i]
-                    y_data = metrics[j]
+                    x_data = metrics[j]
+                    y_data = metrics[i]
                 ax.scatter(x_data.flatten(), y_data.flatten(), marker='.', s=4, alpha=0.02)
         self.job.save_obj_to_subdir(plt, 'plot-metrics',
             f'rank{suffix}')
