@@ -7,19 +7,18 @@ import matplotlib.pyplot as plt
 
 class PlotMetrics():
 
-    def __init__(self, job, include_examples='all'):
+    def __init__(self, job):
         self.job = job
-        self.include_examples = include_examples
 
     def _color(self, i, n):
         return plt.cm.jet(i / n)
 
-    def plot_label_dist(self):
-        values, counts = np.unique(self.labels, return_counts=True)
+    def plot_class_counts(name, labels, self):
+        values, counts = np.unique(labels, return_counts=True)
         plt.bar(values, counts)
-        self.job.save_obj_to_subdir(plt, 'plot-metrics', self.include_examples + '_label_dist')
+        self.job.save_obj_to_subdir(plt, 'plot-metrics', f'counts_{name}')
 
-    def plot_score_trajectories(self, name, scores):
+    def plot_score_curves(self, name, scores):
         # scores is (G x L x I)
         # G is groups of same colored lines, L is lines, I is iterations (y-values)
         f = plt.figure()
@@ -34,7 +33,7 @@ class PlotMetrics():
             for example in replicate:
                 plt.plot(example, linewidth=1., color=color, alpha=0.2)
             self.job.save_obj_to_subdir(plt, 'plot-metrics',
-                f'trajectories_{name}')
+                f'curve_{name}')
 
     def plot_metric_rank_qq(self, dict_metrics):
         for name, metrics in dict_metrics.items():
@@ -89,7 +88,7 @@ class PlotMetrics():
                     y_data = metrics[j]
                 ax.scatter(x_data.flatten(), y_data.flatten(), marker='.', s=4, alpha=0.05)
         self.job.save_obj_to_subdir(plt, 'plot-metrics',
-            f'{self.include_examples}_metric_rank_{self.name}')
+            f'rank_{self.name}')
 
     def plot_metric_rank_corr_array(self, dict_metrics):
         # do pairwise rank correlation between two metrics for each replicate
@@ -123,7 +122,7 @@ class PlotMetrics():
                 jitter = np.random.normal(1, 0.05, len(correlations))
                 ax.plot(jitter, correlations, '.', alpha=0.4)
         self.job.save_obj_to_subdir(plt, 'plot-metrics',
-            f'{self.include_examples}_metric_rho_corr_{self.name}')
+            f'corr_{self.name}')
 
     def plot_metrics(self, dict_metrics, suffix, filter):
         # take dict of {name: metric}

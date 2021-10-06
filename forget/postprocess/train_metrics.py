@@ -3,7 +3,7 @@ import time
 import typing
 import torch
 import numpy as np
-from forget.postprocess.train_metrics import PlotMetrics
+from forget.postprocess.plot_metrics import PlotMetrics
 
 
 NO_CLASS_IDX = -1
@@ -151,14 +151,6 @@ class GenerateMetrics():
         self.force_generate = force_generate
         self.iter_mask = mask_iter_by_batch(self.job.hparams['batch size'],
                         0, int(self.job.hparams['eval number of train examples']))
-        self.labels = np.array([y for _, y in self.job.get_eval_dataset()])
-        #TODO hack to plot noise logits
-        self.noise_dir = noise_dir
-        self.noise_model = noise_model
-        if self.noise_dir == '':
-            self.name = ''
-        else:
-            self.name = f'{self.noise_dir}-{self.noise_model}'
 
     def _transform(self, name, source, transform_fn):
         start_time = time.perf_counter()
@@ -226,21 +218,23 @@ class GenerateMetrics():
 
     def gen_train_metrics_by_epoch(self):
         plotter = PlotMetrics(self.job)
+        labels = np.array([y for _, y in self.job.get_eval_dataset()])
         # R * E * (I x N x C) (list of R iterators over E)
         # R is replicates, E is epochs, I iters, N examples, C classes
         softmaxes = [self.transform_inplace(self.replicate_by_epoch(r),
                         softmax) for r in self.job.replicate_dirs()]
         # collate over E and transform over C to get R * (E x I x N)
-        s_prob = [self.transform_collate(s, signed_prob) for s in softmaxes]
+        s_prob = [self.transform_collate(s,
+                lambda x: signed_prob(x, labels)) for s in softmaxes]
         s_prob = np.stack(s_prob, axis=0)  # stack to (R x E x I x N)
         n_epoch, n_iter, n_example = s_prob.shape[-3], s_prob.shape[-2], s_prob.shape[-1]
-        # plot trajectories for selected examples
-        trajectories = s_prob[..., np.arange(0, 10000, 1000)]
+        # plot curves for selected examples
+        curves = s_prob[..., np.arange(0, 10000, 1000)]
         # reshape to (R x EI x N)
-        trajectories = trajectories.reshape(-1, n_epoch * n_iter, n_example)
+        curves = curves.reshape(-1, n_epoch * n_iter, n_example)
         # transpose to (N x R x EI)
-        trajectories = trajectories.transpose(axes=(2, 0, 1))
-        plotter.plot_score_trajectories(trajectories)
+        curves = curves.transpose(axes=(2, 0, 1))
+        plotter.plot_score_curves(curves)
 
         metrics_by_epoch = {  # each metric is R x E x N
             'sgd_mean_prob': self.transform_inplace(s_prob, mean_prob),
@@ -250,10 +244,13 @@ class GenerateMetrics():
         }
         # filter by train/test/all
         for include in ['all', 'train', 'test']:
+            name = f'-{include}'
+            # label distribution
+            plotter.plot_class_counts(name, self._train_eval_filter(labels, include))
             # plot mean over epochs (R x N)
-            plotter.plot_metrics(metrics_by_epoch, f'-{include}',
+            plotter.plot_metrics(metrics_by_epoch, name,
                 filter=lambda x: np.mean(self._train_eval_filter(x, include), axis=1))
             # plot by epoch
             for i in range(n_epoch):
-                plotter.plot_metrics(metrics_by_epoch, f'-{include}-ep{i}',
+                plotter.plot_metrics(metrics_by_epoch, f'{name}-ep{i}',
                     filter=lambda x: self._train_eval_filter(x[:, i, :], include))
