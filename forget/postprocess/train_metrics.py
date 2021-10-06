@@ -197,9 +197,9 @@ class GenerateMetrics():
 
     def _train_eval_filter(self, ndarray, split_type):  # applies to metrics with N as last dim
         split_point = int(self.job.hparams['eval number of train examples'])
-        if self.include_examples == 'train':
+        if split_type == 'train':
             return ndarray[..., :split_point]
-        elif self.include_examples == 'test':
+        elif self.split_type == 'test':
             return ndarray[..., split_point:]
         else:
             return ndarray
@@ -211,19 +211,22 @@ class GenerateMetrics():
         plotter = PlotMetrics(self.job)
         # R * E * (I x N x C) (list of R iterators over E)
         # R is replicates, E is epochs, I iters, N examples, C classes
+        print("Loading signed probabilities...")
         softmaxes = [self.transform_inplace(self.replicate_by_epoch(r),
                         softmax) for r, _ in self.job.replicate_dirs()]
         # collate over E and transform over C to get R * (E x I x N)
         s_prob = [self.transform_collate(s, self.signed_prob) for s in softmaxes]
         s_prob = np.stack(s_prob, axis=0)  # stack to (R x E x I x N)
-        n_epoch, n_iter, n_example = s_prob.shape[-3], s_prob.shape[-2], s_prob.shape[-1]
+        n_epoch, n_iter = s_prob.shape[-3], s_prob.shape[-2]
+        print("Loading metrics...")
         # each metric summarizes over I for (R x E x N)
         metrics_by_epoch = {
-            'sgd_mean_prob': self.transform_inplace(s_prob, mean_prob),
-            'sgd_diff_norm': self.transform_inplace(s_prob, diff_norm),
+            'sgd_mean_prob': self.transform_collate(s_prob, mean_prob),
+            'sgd_diff_norm': self.transform_collate(s_prob, diff_norm),
             # 'sgd_forgetting': self.generate_metrics(s_prob, forgetting_events),
             # 'sgd_batch_forgetting': self.generate_metrics(s_prob, self.batch_forgetting),
         }
+        print("Plotting...")
         # plot by train/test/all
         for include in ['all', 'train', 'test']:
             name = f'-{include}'

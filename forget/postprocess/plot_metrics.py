@@ -13,7 +13,7 @@ class PlotMetrics():
     def _color(self, i, n):
         return plt.cm.jet(i / n)
 
-    def plot_class_counts(name, labels, self):
+    def plot_class_counts(self, name, labels):
         values, counts = np.unique(labels, return_counts=True)
         plt.bar(values, counts)
         self.job.save_obj_to_subdir(plt, 'plot-metrics', f'counts_{name}')
@@ -32,8 +32,8 @@ class PlotMetrics():
             color = self._color(i, len(scores))
             for example in replicate:
                 plt.plot(example, linewidth=1., color=color, alpha=0.2)
-            self.job.save_obj_to_subdir(plt, 'plot-metrics',
-                f'curve_{name}')
+        self.job.save_obj_to_subdir(plt, 'plot-metrics',
+            f'curve_{name}')
 
     def plot_metric_rank_qq(self, dict_metrics):
         for name, metrics in dict_metrics.items():
