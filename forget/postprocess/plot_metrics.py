@@ -56,7 +56,7 @@ class PlotMetrics():
         ranks[rep_idx, sorted_idx] = rank_idx
         return ranks
 
-    def plot_metric_scatter_array(self, dict_metrics):
+    def plot_metric_scatter_array(self, suffix, dict_metrics):
         # take dict of {name: metric}, plot every combination of mean(metricA) to metricB
         # also include ranked versions of each metric
         names, orders, metrics = [], [], []
@@ -86,11 +86,11 @@ class PlotMetrics():
                 else:
                     x_data = metrics[i]
                     y_data = metrics[j]
-                ax.scatter(x_data.flatten(), y_data.flatten(), marker='.', s=4, alpha=0.05)
+                ax.scatter(x_data.flatten(), y_data.flatten(), marker='.', s=4, alpha=0.02)
         self.job.save_obj_to_subdir(plt, 'plot-metrics',
-            f'rank_{self.name}')
+            f'rank{suffix}')
 
-    def plot_metric_rank_corr_array(self, dict_metrics):
+    def plot_metric_rank_corr_array(self, suffix, dict_metrics):
         # do pairwise rank correlation between two metrics for each replicate
         # if between the same metric and itself, find correlation between replicates
         # also include rank correlation with mean metrics
@@ -122,7 +122,7 @@ class PlotMetrics():
                 jitter = np.random.normal(1, 0.05, len(correlations))
                 ax.plot(jitter, correlations, '.', alpha=0.4)
         self.job.save_obj_to_subdir(plt, 'plot-metrics',
-            f'corr_{self.name}')
+            f'corr{suffix}')
 
     def plot_metrics(self, dict_metrics, suffix, filter):
         # take dict of {name: metric}
@@ -131,5 +131,5 @@ class PlotMetrics():
         # filter is applied to each metric
         metrics = {k + suffix: filter(v) for k, v in dict_metrics.items()}
         self.plot_metric_rank_qq(metrics)
-        self.plot_metric_scatter_array(metrics)
-        self.plot_metric_rank_corr_array(metrics)
+        self.plot_metric_scatter_array(suffix, metrics)
+        self.plot_metric_rank_corr_array(suffix, metrics)

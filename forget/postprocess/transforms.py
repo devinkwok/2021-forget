@@ -1,3 +1,4 @@
+import typing
 import torch
 import numpy as np
 
@@ -140,18 +141,36 @@ def forgetting_events(output_prob_by_iter: np.ndarray,
     Args:
         output_prob_by_iter (np.ndarray): signed_prob scores
             with dimensions $(\dots, I \times N)$,
-        iter_mask (np.ndarray, optional): Boolean mask of same
-            shape as output_prob_by_iter. For each example,
-            forgetting events will only be detected between successive
-            time steps which are True in the mask. Defaults to None.
+        iter_mask (np.ndarray, optional): Boolean mask of $(I \times N)$.
+            For each example, forgetting events will only be detected
+            between successive time steps which are True in the mask.
+            Each example must have the same number of True values over I.
+            Defaults to None.
 
     Returns:
-        np.ndarray: [description]
+        np.ndarray: array of $(\dots, N)$ forgetting counts.
     """
-    pass #TODO
+    if iter_mask is not None:
+        assert output_prob_by_iter.shape[-1] == iter_mask.shape[-1]
+        # mask must have same number of True sampling points for every example
+        total = np.sum(iter_mask, axis=-2)
+        n_unmasked = total.flatten()[0]
+        assert np.all(total == n_unmasked)
+        # repeat mask in I dim until it fills output_prob_by_iter
+        assert output_prob_by_iter.shape[-2] % iter_mask.shape[-2] == 0
+        n_repeats = output_prob_by_iter.shape[-2] // iter_mask.shape[-2]
+        iter_mask = iter_mask.repeat(n_repeats, axis=-2)
+        new_shape = list(output_prob_by_iter.shape)
+        new_shape[-2] = n_unmasked * n_repeats
+        output_prob_by_iter = output_prob_by_iter[..., iter_mask].reshape(new_shape)
+    is_correct = (output_prob_by_iter > 0)  # use sign to indicate whether correct/incorrect
+    diff = np.logical_and(is_correct[..., :-1, :], np.logical_not(is_correct[..., 1:, :]))
+    n_forget = np.sum((diff == 1), axis=-2) # correct - incorrect is 1 - 0
+    return n_forget
 
 
-def mask_iter_by_batch(train_batch_size, example_start_idx, example_end_idx):
+def mask_iter_by_batch(train_batch_size, n_train_examples,
+            example_start_idx, example_end_idx) -> np.ndarray:
     """Generates iteration mask for when examples occur in the training batch.
     This mask allows forgetting_events to compute the same forgetting counts
     as calculated by Toneva et al., 2018.
@@ -159,11 +178,20 @@ def mask_iter_by_batch(train_batch_size, example_start_idx, example_end_idx):
     then the next 128 at time t+1, etc.
 
     Args:
-        train_batch_size ([type]): [description]
-        example_start_idx ([type]): [description]
-        example_end_idx ([type]): [description]
+        train_batch_size (int): batch size in training
+        n_train_examples (int): number of examples in train set (N)
+        example_start_idx (int): index of first example to include
+        example_end_idx (int): index of last example to include
+
+    Returns:
+        np.ndarray: array of $(I, N)$ True/False mask values
     """
-    pass #TODO
+    n_batch = int(np.ceil(n_train_examples / train_batch_size))
+    iter_mask = np.zeros((n_batch, example_end_idx - example_start_idx), dtype=bool)
+    iter_idx = np.arange(n_batch).repeat(train_batch_size)[example_start_idx:example_end_idx]
+    example_idx = np.arange(example_end_idx - example_start_idx)
+    iter_mask[iter_idx, example_idx] = True
+    return iter_mask
 
 
 def stats_str(array):

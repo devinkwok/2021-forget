@@ -2,7 +2,7 @@ import os
 import time
 import torch
 import numpy as np
-from transforms import *
+from forget.postprocess.transforms import *
 from forget.postprocess.plot_metrics import PlotMetrics
 
 class GenerateMetrics():
@@ -11,9 +11,11 @@ class GenerateMetrics():
         # filter batch by train/test examples
         self.job = job
         self.force_generate = force_generate
+        eval_dataset = self.job.get_eval_dataset()
+        self.labels = np.array([y for _, y in eval_dataset])
         self.iter_mask = mask_iter_by_batch(self.job.hparams['batch size'],
-                        0, int(self.job.hparams['eval number of train examples']))
-        self.labels = np.array([y for _, y in self.job.get_eval_dataset()])
+            len(self.job.get_train_dataset()), len(self.labels), 0,
+            int(self.job.hparams['eval number of train examples']))
 
     def _transform(self, name, source, transform_fn):
         start_time = time.perf_counter()
@@ -39,7 +41,7 @@ class GenerateMetrics():
         if not os.path.exists(out_file) or self.force_generate:
             print(f'Generating collated {transform_fn.__name__} ' + \
                     f'from {name}:')
-            outputs = [self._transform(i, source, transform_fn)
+            outputs = [self._transform(str(i), source, transform_fn)
                         for i, source in enumerate(source_iterable)]
             torch.save(np.stack(outputs, axis=0), out_file)
         return torch.load(out_file, map_location=torch.device('cpu'))
@@ -77,7 +79,7 @@ class GenerateMetrics():
         softmaxes = [self.transform_inplace(self.replicate_by_epoch(r),
                         softmax) for r, _ in self.job.replicate_dirs()]
         # collate over E and transform over C to get R * (E x I x N)
-        s_prob = [self.transform_collate(s, f'sgd_rep{i}',
+        s_prob = [self.transform_collate(f'sgd_rep{i}', s,
                 self.signed_prob) for i, s in enumerate(softmaxes)]
         s_prob = np.stack(s_prob, axis=0)  # stack to (R x E x I x N)
         n_epoch, n_iter = s_prob.shape[-3], s_prob.shape[-2]
@@ -86,8 +88,8 @@ class GenerateMetrics():
         metrics_by_epoch = {
             'sgd_mean_prob': self.transform_collate('sgd', s_prob, mean_prob),
             'sgd_diff_norm': self.transform_collate('sgd', s_prob, diff_norm),
-            # 'sgd_forgetting': self.generate_metrics(s_prob, forgetting_events),
-            # 'sgd_batch_forgetting': self.generate_metrics(s_prob, self.batch_forgetting),
+            'sgd_forgetting': self.generate_metrics(s_prob, forgetting_events),
+            'sgd_batch_forgetting': self.generate_metrics(s_prob, self.batch_forgetting),
         }
         print("Plotting...")
         # plot by train/test/all
@@ -97,7 +99,7 @@ class GenerateMetrics():
             plotter.plot_class_counts(name,
                     self._train_eval_filter(self.labels, include))
             # plot curves for selected examples
-            curves = s_prob[..., np.arange(0, 10000, 1000)]
+            curves = self._train_eval_filter(s_prob, include)[..., np.arange(0, 10000, 2000)]
             # reshape to (R x EI x N)
             curves = curves.reshape(-1, n_epoch * n_iter, curves.shape[-1])
             # transpose to (N x R x EI)
