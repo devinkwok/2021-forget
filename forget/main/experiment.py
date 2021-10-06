@@ -9,7 +9,7 @@ from forget.damage import damagemodel
 from forget.postprocess import postprocess
 from forget.damage.noise import sample_noise, eval_noise
 from forget.postprocess.weight_stats import PlotWeights
-from forget.postprocess.train_metrics import PlotTraining
+from forget.postprocess.train_metrics import GenerateMetrics
 
 
 class run_experiment:
@@ -93,16 +93,7 @@ class run_experiment:
 
             """Plot auc, diff, and forgetting ranks
             """
-
-            logit_subdirs = ['', 'noise_additive_conv']
-
-            # generate metrics
-            for subdir in logit_subdirs:
-                metric_generator = PlotTraining(job, noise_dir=subdir)
-                metric_generator.gen_and_save_metrics()
-            # plot metrics
-            metric_generator.plot_metrics(logit_subdirs, 'all')
-            metric_generator.plot_metrics(logit_subdirs, 'train')
-            metric_generator.plot_metrics(logit_subdirs, 'test')
+            gen_metrics = GenerateMetrics(job, force_generate=False)
+            gen_metrics.gen_train_metrics_by_epoch()
 
         print(f"Jobs finished at t={datetime.datetime.now()}")

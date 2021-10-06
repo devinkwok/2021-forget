@@ -3,8 +3,7 @@ import time
 import typing
 import torch
 import numpy as np
-from scipy.stats import spearmanr
-import matplotlib.pyplot as plt
+from forget.postprocess.train_metrics import PlotMetrics
 
 
 NO_CLASS_IDX = -1
@@ -59,97 +58,164 @@ def n_cumulative_top_classes(top_classes_by_iter: typing.List[np.ndarray]) -> np
         n_cumulative.append(np.array(n_unique) - 1)  # don't count NO_CLASS_IDX
     return np.stack(n_cumulative, axis=1)
 
-def outputs_to_correctness(output_prob: np.ndarray, tgt_labels: np.ndarray) -> np.ndarray:
+
+def signed_prob(output_prob: np.ndarray, tgt_labels: np.ndarray) -> np.ndarray:
     """
     Args:
-        output_prob (np.ndarray): concatenated tensor of outputs (after Softmax)
-            dimensions $(N \times C)$ where $N$ is number of examples, $C$ is number of classes.
+        output_prob (np.ndarray): output probabilities (after Softmax) with
+            dimensions $(\dots, N \times C)$ where $N$ is number of examples,
+            $C$ is number of classes.
         tgt_labels (np.ndarray): true classification labels given as
             integers between $0$ and $C - 1$ in a tensor of dimension $(N)$.
 
     Returns:
         (np.ndarray): probability of the correct class from `tgt_labels`,
             multiplied by -1 if the correct class was not the argmax,
-            dimension $(N)$.
+            dimension $(\dots, N)$.
     """
-    probabilities = output_prob[np.arange(len(tgt_labels)), tgt_labels]
-    class_labels = np.argmax(output_prob, axis=1)
+    probabilities = output_prob[..., np.arange(len(tgt_labels)), tgt_labels]
+    class_labels = np.argmax(output_prob, axis=-1)
     correct_mask = (class_labels == tgt_labels) * 2 - 1
-    correctness = probabilities * correct_mask
-    return correctness
+    signed_prob = probabilities * correct_mask
+    return signed_prob
 
-def top_1_auc(output_prob_by_iter: typing.List[np.ndarray], divide_by_iters=True) -> np.ndarray:
+
+def mean_prob(output_prob_by_iter: np.ndarray, divide_by_iters=True) -> np.ndarray:
     """
     Args:
-        output_prob_by_iter (typing.List[np.ndarray]): list of outputs from
-            outputs_to_correctness over multiple iterations.
+        output_prob_by_iter (np.ndarray): signed_prob scores
+            with dimensions $(\dots, I \times N)$.
+            where each iteration $I$ is over same examples in same batch order.
         divide_by_iters (bool, optional): If True, divide area under curve
             by number of iterations to normalize between 0 and 1. Defaults to True.
 
     Returns:
-        np.ndarray: array of $N$ area under curve floats.
+        np.ndarray: mean of $N$ over $I$, dimensions $(\dots, N)$.
     """
-    auc = np.sum(np.abs(output_prob_by_iter), axis=0)
+    auc = np.sum(np.abs(output_prob_by_iter), axis=-2)
     if divide_by_iters:
-        auc = auc / output_prob_by_iter.shape[0]
+        auc = auc / output_prob_by_iter.shape[-2]
     return auc
 
 
-def diff_norm(output_prob_by_iter: typing.List[np.ndarray],
+def diff_norm(output_prob_by_iter: np.ndarray,
             norm_power=1, divide_by_iters=True) -> np.ndarray:
     """Takes difference of output probabilities between successive iterations,
     and calculates a norm on this differencing operation.
 
     Args:
-        output_prob_by_iter (typing.List[np.ndarray]): list of outputs from
-            outputs_to_correctness over multiple iterations,
-            where each iteration is called on same examples in same batch order.
-            List should be ordered from earliest to latest iteration.
+        output_prob_by_iter (np.ndarray): signed_prob scores
+            with dimensions $(\dots, I \times N)$,
+            where each iteration $I$ is over same examples in same batch order.
         norm_power (int, optional): Type of norm (e.g. 1 is abs diff, 2 is mean squared difference).
             If less than 1, returns infinity norm (max difference). Defaults to 1.
         divide_by_iters (bool, optional): If True, divide result by $N$.
 
     Returns:
-        np.ndarray: array of $N$ mean differences for each sample over all iterations.
+        np.ndarray: array of $(\dots, N)$ mean differences.
     """
     output_prob_by_iter = np.abs(output_prob_by_iter)
-    diff = np.abs(output_prob_by_iter[:-1, :] - output_prob_by_iter[1:, :])
+    diff = np.abs(output_prob_by_iter[..., :-1, :] - output_prob_by_iter[..., 1:, :])
     if norm_power <= 0:
-        output_diff = np.max(diff, axis=0)
+        norm = np.max(diff, axis=-2)
     else:
-        output_diff = (np.sum(diff**norm_power, axis=0) / diff.shape[0])**(1 / norm_power)
+        norm = (np.sum(diff**norm_power, axis=-2) / diff.shape[-2])**(1 / norm_power)
     if divide_by_iters:
-        output_diff = output_diff / output_prob_by_iter.shape[0]
-    return output_diff
+        norm = norm / output_prob_by_iter.shape[-2]
+    return norm
 
-def forgetting_events(output_prob_by_iter, batch_mask=None) -> np.ndarray:
+def identity(array):
+    """For stacking using transform()
+    """
+    return array
+
+def softmax(logits):
+    with torch.no_grad():
+        return torch.softmax(logits, dim=-1).detach().numpy()
+
+def forgetting_events(output_prob_by_iter, iter_mask=None) -> np.ndarray:
     pass #TODO
 
-def create_ordered_batch_mask(train_batch_size, example_start_idx, example_end_idx):
+def mask_iter_by_batch(train_batch_size, example_start_idx, example_end_idx):
     pass #TODO
 
 def stats_str(array):
     return '<{:0.4f}|{:0.4f}|{:0.4f}> {}'.format(
         np.min(array), np.mean(array), np.max(array), array.shape)
 
-class PlotTraining():
+class GenerateMetrics():
 
-    def __init__(self, job, noise_dir='', noise_model=0):
+    def __init__(self, job, force_generate=False):
         # filter batch by train/test examples
         self.job = job
-        self.batch_mask = create_ordered_batch_mask(self.job.hparams['batch size'],
+        self.force_generate = force_generate
+        self.iter_mask = mask_iter_by_batch(self.job.hparams['batch size'],
                         0, int(self.job.hparams['eval number of train examples']))
         self.labels = np.array([y for _, y in self.job.get_eval_dataset()])
         #TODO hack to plot noise logits
         self.noise_dir = noise_dir
         self.noise_model = noise_model
-        self.include_examples = 'all'
         if self.noise_dir == '':
             self.name = ''
         else:
             self.name = f'{self.noise_dir}-{self.noise_model}'
 
-    def _train_eval_filter(self, ndarray):  # applies to metrics with N as last dim
+    def _transform(self, name, source, transform_fn):
+        start_time = time.perf_counter()
+        output = transform_fn(source)
+        print(f'\t{stats_str(output)} t={time.perf_counter() - start_time} {name}')
+        return output
+
+    def _transform_save(self, output, out_file, source_iterable, transform_fn):
+            torch.save({
+                    'source_iterable': source_iterable,
+                    'transform_fn': transform_fn,
+                    'metrics': output,
+                }, out_file)
+
+    def _transform_load(self, out_file, source_iterable, transform_fn):
+        obj = torch.load(out_file, map_location=torch.device('cpu'))
+        # check that generating functions weren't changed since last save
+        if obj['source_iterable'] == source_iterable \
+                and obj['transform_fn'] == transform_fn:
+            return obj['metrics']
+        raise ValueError(f"{str(obj['source_iterable'])}, {str(obj['transform_fn'])}' \
+            + 'don't match {str(source_iterable)}, {str(transform_fn)}. Try `force_generate=True`?")
+
+    def transform_inplace(self, source_iterable, transform_fn):
+        for source_file, source in source_iterable:
+            source_path, ext = os.path.splitext(source_file)
+            out_file = source_path + '-' + transform_fn.__name__ + ext
+            if not os.path.exists(out_file) or self.force_generate:
+                print(f'Generating in-place {transform_fn.__name__} from {source_iterable.__name__}:')
+                output = self._transform(source_file, source, transform_fn)
+                self._transform_save(output, out_file, source_iterable, transform_fn)
+            yield self._transform_load(out_file, source_iterable, transform_fn)
+
+    def transform_collate(self, source_iterable, transform_fn):
+        out_file = f'{source_iterable.__name__}-{transform_fn.__name__}.metric'
+        path = os.path.join(self.job.save_path, 'metrics', out_file)
+        # check if output of transform_fn already exists for source_iterable
+        if not os.path.exists(out_file) or self.force_generate:
+            print(f'Generating collated {transform_fn.__name__} from {source_iterable.__name__}:')
+            outputs = [self._transform(source_file, source, transform_fn)
+                                for source_file, source in source_iterable]
+            self._transform_save(np.stack(outputs, axis=0))
+        return self._transform_load(out_file, source_iterable, transform_fn)
+
+    def replicate_by_epoch(self, model_dir, prefix='eval_logits'):  # source_iter
+        for i in range(self.job.n_epochs()):
+            file = os.path.join(model_dir, f'{prefix}={i}.pt')
+            outputs = torch.load(file, map_location=torch.device('cpu'))
+            yield file, outputs
+
+    def noise_by_replicate():  # source_iter
+        pass #TODO
+
+    def batch_forgetting(self, output_prob_by_iter):  # as implemented by Toneva, same as Nikhil'ss
+        return forgetting_events(output_prob_by_iter, batch_mask=self.batch_mask)
+
+    def _train_eval_filter(self, ndarray, split_type):  # applies to metrics with N as last dim
         split_point = int(self.job.hparams['eval number of train examples'])
         if self.include_examples == 'train':
             return ndarray[..., :split_point]
@@ -158,204 +224,36 @@ class PlotTraining():
         else:
             return ndarray
 
-    def iter_logits_to_prob(self, replicate):
-        #TODO hack to plot noise logits
-        if self.noise_dir == '':
-            base_dir = os.path.join(self.job.save_path, f'model{replicate}')
-            for epoch in range(1, self.job.n_epochs):
-                file = os.path.join(base_dir, f'eval_logits={epoch}.pt')
-                logits = torch.load(file, map_location=torch.device('cpu'))
-                for prob in self.logits_by_iter(logits):
-                    yield prob
-        else:
-            name = f'logits-model{self.noise_model}-noise{replicate}.pt'
-            file = os.path.join(self.job.save_path, 'logits_' + self.noise_dir, name)
-            logits = torch.load(file, map_location=torch.device('cpu'))['logit']
-            for prob in self.logits_by_iter(logits):
-                yield prob
+    def gen_train_metrics_by_epoch(self):
+        plotter = PlotMetrics(self.job)
+        # R * E * (I x N x C) (list of R iterators over E)
+        # R is replicates, E is epochs, I iters, N examples, C classes
+        softmaxes = [self.transform_inplace(self.replicate_by_epoch(r),
+                        softmax) for r in self.job.replicate_dirs()]
+        # collate over E and transform over C to get R * (E x I x N)
+        s_prob = [self.transform_collate(s, signed_prob) for s in softmaxes]
+        s_prob = np.stack(s_prob, axis=0)  # stack to (R x E x I x N)
+        n_epoch, n_iter, n_example = s_prob.shape[-3], s_prob.shape[-2], s_prob.shape[-1]
+        # plot trajectories for selected examples
+        trajectories = s_prob[..., np.arange(0, 10000, 1000)]
+        # reshape to (R x EI x N)
+        trajectories = trajectories.reshape(-1, n_epoch * n_iter, n_example)
+        # transpose to (N x R x EI)
+        trajectories = trajectories.transpose(axes=(2, 0, 1))
+        plotter.plot_score_trajectories(trajectories)
 
-    def logits_by_iter(self, logits):
-        # iterate over saved logits in same order as training
-        with torch.no_grad():
-            probs = torch.softmax(logits, dim=2).detach().numpy()
-            for train_batch_idx, prob in enumerate(probs):
-                yield prob, train_batch_idx
-
-    def plot_label_dist(self):
-        values, counts = np.unique(self.labels, return_counts=True)
-        plt.bar(values, counts)
-        self.job.save_obj_to_subdir(plt, 'plot-metrics', self.include_examples + '_label_dist')
-
-    #TODO change to apply score_fn to last dim only, use arbitrary dims
-    def generate_scores(self, score_fn):
-        # reduces output dimensionality from (R x I x N x C) to (R x I x N)
-        # by calculating score_fn over C classes
-        print(f'Scoring {score_fn.__name__} over replicates...')
-        scores = []
-        for i in range(self.job.n_replicates):
-            start_time = time.perf_counter()
-            score = [score_fn(prob, self.labels)
-                    for prob, _ in self.iter_logits_to_prob(i)]
-            score = np.stack(score, axis=0)
-            scores.append(score)
-            print(f'm={i} sc:{stats_str(score)} t={time.perf_counter() - start_time}')
-        return np.stack(scores, axis=0)
-
-    #TODO change to apply to last 2 dims only, use arbitrary dims
-    def generate_metrics(self, scores, metric_fn):
-        # reduces output dimensionality from (R x I x N) to (R x N) by
-        # calculating metric_fn over I iterations
-        name = self.include_examples + '_' + metric_fn.__name__
-        print(f'Metric {name} over replicates...')
-        metrics = []
-        for i, score in enumerate(scores):
-            start_time = time.perf_counter()
-            metric = metric_fn(score)
-            metrics.append(metric)
-            print(f'm={i}, mt:{stats_str(metric)} t={time.perf_counter() - start_time}')
-        return np.stack(metrics, axis=0)
-
-    def plot_score_trajectories(self, dict_scores, skip=1):
-        for name, scores in dict_scores.items():
-            for i, replicate in enumerate(scores):
-                replicate = replicate.transpose()  # put N dim before I
-                n_examples = replicate.shape[0]
-                print(f'Plotting trajectories for {name} replicate {i}...')
-                start_time = time.perf_counter()
-                f = plt.figure()
-                f.set_figwidth(16)
-                f.set_figheight(8)
-                plt.ylim(-1., 1.)
-                for j, example in enumerate(replicate):
-                    if j % skip == 0:
-                        plt.plot(example, linewidth=1., alpha=0.2)
-                plt.title(name)
-                print(f'Plotted in t={time.perf_counter() - start_time}')
-                self.job.save_obj_to_subdir(plt, 'plot-metrics',
-                    f'trajectories_{name}_{i}')
-
-    def plot_metric_rank_qq(self, dict_metrics):
-        for name, metrics in dict_metrics.items():
-            n_samples = len(metrics[0])
-            rank = np.arange(n_samples)
-            # plot sorted metrics as lines
-            colors = plt.cm.jet(np.linspace(0., 1., n_samples))
-            for i, metric in enumerate(metrics):
-                plt.plot(rank, np.sort(metric), color=colors[i], alpha=0.4)
-            plt.title(name)
-            self.job.save_obj_to_subdir(plt, 'plot-metrics', name)
-
-    def metrics_to_ranks(self, metrics):
-        # assume dimensions are (replicates, examples)
-        n_rep, n_example = metrics.shape
-        sorted_idx = np.argsort(metrics, axis=1)
-        rep_idx = np.arange(n_rep).reshape(n_rep, 1).repeat(n_example, axis=1)
-        rank_idx = np.arange(n_example).reshape(1, n_example).repeat(n_rep, axis=0)
-        ranks = np.empty_like(sorted_idx)
-        ranks[rep_idx, sorted_idx] = rank_idx
-        return ranks
-
-    def plot_metric_scatter_array(self, dict_metrics):
-        # take dict of {name: metric}, plot every combination of mean(metricA) to metricB
-        # also include ranked versions of each metric
-        names, orders, metrics = [], [], []
-        for name, metric in dict_metrics.items():
-            names.append(name)
-            metrics.append(metric)
-            orders.append(np.mean(metric, axis=0))  # average over replicates
-            # rank version
-            names.append(name + '_rank')
-            rank = self.metrics_to_ranks(metric)
-            metrics.append(rank)
-            orders.append(np.mean(rank, axis=0))  # average over replicates
-        # scatter plot for every combination of order, metric
-        n_rep = metrics[0].shape[0]
-        n_plt = max(len(names), 2)
-        fig, axes = plt.subplots(n_plt, n_plt, figsize=(3 * n_plt, 3 *n_plt))
-        for i, (name_row, row) in enumerate(zip(names, axes)):
-            for j, (name_col, ax) in enumerate(zip(names, row)):
-                if i == 0:
-                    ax.set_title(name_col)
-                if j == 0:
-                    ax.set_ylabel(name_row)
-                if i <= j:
-                    x_data = orders[i].reshape(1, -1).repeat(n_rep, axis=0)
-                    y_data = metrics[j]
-                    ax.set_xlabel('mean_' + name_col)
-                else:
-                    x_data = metrics[i]
-                    y_data = metrics[j]
-                ax.scatter(x_data.flatten(), y_data.flatten(), marker='.', s=4, alpha=0.05)
-        self.job.save_obj_to_subdir(plt, 'plot-metrics',
-            f'{self.include_examples}_metric_rank_{self.name}')
-
-    def plot_metric_rank_corr_array(self, dict_metrics):
-        # take dict of {name: metric}
-        # do pairwise rank correlation between two metrics for each replicate
-        # if between the same metric and itself, find correlation between replicates
-        # also include rank correlation with mean metrics
-        names, metrics = [], []
-        for name, metric in dict_metrics.items():
-            names.append(name)
-            metrics.append(metric)
-            n_rep = metric.shape[0]
-            # mean metrics over replicates
-            names.append(name + '_mean')
-            metrics.append(np.mean(metric, axis=0).reshape(1, -1).repeat(n_rep, axis=0))
-        n_plt = max(len(names), 2)
-        fig, axes = plt.subplots(n_plt, n_plt, figsize=(3 * n_plt, 3 *n_plt))
-        for i, (name1, metric1, row) in enumerate(zip(names, metrics, axes)):
-            for j, (name2, metric2, ax) in enumerate(zip(names, metrics, row)):
-                if i == j:  # do pairwise over same metric, multiple replicates
-                    # spearmanr returns (rho, p-value), ignore the p-value
-                    correlations = [spearmanr(a, b)[0] for a, b in zip(metric1[:-1], metric1[1:])]
-                else:  # do pairwise rank corr between two metrics, per replicate
-                    correlations = [spearmanr(a, b)[0] for a, b in zip(metric1, metric2)]
-                # plot rank correlations as box plot
-                ax.boxplot(correlations)
-                if i == 0:
-                    ax.set_title(name2)
-                if j == 0:
-                    ax.set_ylabel(name1)
-                ax.set_ylim(0., 1.)
-                # also plot individual correlations and p-values as scatter with jitter
-                jitter = np.random.normal(1, 0.05, len(correlations))
-                ax.plot(jitter, correlations, '.', alpha=0.4)
-        self.job.save_obj_to_subdir(plt, 'plot-metrics',
-            f'{self.include_examples}_metric_rho_corr_{self.name}')
-
-    def batch_forgetting(self, output_prob_by_iter):  # as implemented by Toneva, same as Nikhil'ss
-        return forgetting_events(output_prob_by_iter, batch_mask=self.batch_mask)
-
-    def gen_and_save_metrics(self):
-        self.plot_label_dist()
-        # score derived from output probabilities
-        correctness = self.generate_scores(outputs_to_correctness)
-        self.plot_score_trajectories({f'{self.name}_correct': correctness}, skip=1000)
-        #TODO save raw scores and metrics to avoid repeating steps
-        # metrics derived from scores
-        auc = self.generate_metrics(correctness, top_1_auc)
-        diff = self.generate_metrics(correctness, diff_norm)
-        # # TODO forgetting
-        # forgetting = self.generate_metrics(correctness, forgetting_events)
-        # batch_forgetting = self.generate_metrics(correctness, self.batch_forgetting)
-        metrics = {f'{self.name}_auc': auc, f'{self.name}_diff': diff}
-        self.job.save_obj_to_subdir(metrics, 'metrics', f'metrics_{self.name}.pt')
-
-    #TODO split metric gen object from metric plot
-    def plot_metrics(self, metrics_files, include):
-        dict_metrics = {}
-        assert include == 'all' or include == 'train' or include == 'test'
-        # include_examples is in self because plots use it for titles
-        self.include_examples = include
-        for name in metrics_files:
-            file = os.path.join(self.job.save_path, 'metrics', f'metrics_{name}-{self.noise_model}.pt')
-            metrics = torch.load(file)
-            for name, metric in metrics.items():
-                if name in dict_metrics:  # require unique names
-                    raise KeyError(f'Metric {name} already exists, cannot load from {file}')
-                # filter by train/test/all
-                dict_metrics[name] = self._train_eval_filter(metric)
-        self.plot_metric_rank_qq(dict_metrics)
-        self.plot_metric_rank_corr_array(dict_metrics)
-        self.plot_metric_scatter_array(dict_metrics)
+        metrics_by_epoch = {  # each metric is R x E x N
+            'sgd_mean_prob': self.transform_inplace(s_prob, mean_prob),
+            'sgd_diff_norm': self.transform_inplace(s_prob, diff_norm),
+            # 'sgd_forgetting': self.generate_metrics(s_prob, forgetting_events),
+            # 'sgd_batch_forgetting': self.generate_metrics(s_prob, self.batch_forgetting),
+        }
+        # filter by train/test/all
+        for include in ['all', 'train', 'test']:
+            # plot mean over epochs (R x N)
+            plotter.plot_metrics(metrics_by_epoch, f'-{include}',
+                filter=lambda x: np.mean(self._train_eval_filter(x, include), axis=1))
+            # plot by epoch
+            for i in range(n_epoch):
+                plotter.plot_metrics(metrics_by_epoch, f'-{include}-ep{i}',
+                    filter=lambda x: self._train_eval_filter(x[:, i, :], include))
