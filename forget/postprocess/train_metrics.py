@@ -113,9 +113,10 @@ class GenerateMetrics():
             plotter.plot_class_counts(name,
                     self._train_eval_filter(self.labels, include))
             # probability curves
-            filtered_prob = self._train_eval_filter(s_prob)
-            mean_over_epochs = {f'{k}{name}': np.mean(self._train_eval_filter(v), axis=1) \
-                                for k, v in metrics.items()}
+            filtered_prob = self._train_eval_filter(s_prob, include)
+            mean_over_epochs = {f'{k}{name}': np.mean(
+                self._train_eval_filter(v, include), axis=1) \
+                for k, v in metrics.items()}
             plotter.plot_curves_by_rank(filtered_prob, mean_over_epochs)
             # plot metric over epochs (R x N)
             plotter.plot_metric_rank_qq(mean_over_epochs)
@@ -123,7 +124,8 @@ class GenerateMetrics():
             plotter.plot_metric_rank_corr_array(name, mean_over_epochs)
             # plot metrics per epoch
             for i in range(n_epoch):
-                by_epoch = {f'{k}{name}-ep{i}': self._train_eval_filter(v[:, i, :], include) \
+                by_epoch = {f'{k}{name}-ep{i}': self._train_eval_filter(
+                            v[:, i, :], include) \
                             for k, v in metrics_by_epoch.items()}
                 plotter.plot_metric_scatter_array(name, by_epoch)
                 plotter.plot_metric_rank_corr_array(name, by_epoch)
@@ -152,9 +154,9 @@ class GenerateMetrics():
         # plot by train/test/all
         for include in ['all', 'train', 'test']:
             name = f'-{include}'
-            metrics_by_noise = {f'{k}-{include}': self._train_eval_filter(v) \
+            filtered_prob = self._train_eval_filter(s_prob, include)
+            metrics_by_noise = {f'{k}-{include}': self._train_eval_filter(v, include) \
                                 for k, v in metrics.items()}
-            filtered_prob = self._train_eval_filter(s_prob)
             plotter.plot_curves_by_rank(filtered_prob, metrics_by_noise)
             # plot (R, S, N), mean over S (noises)
             plotter.plot_metric_scatter_array(name, metrics_by_noise)
