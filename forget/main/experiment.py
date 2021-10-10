@@ -94,6 +94,7 @@ class run_experiment:
             """Plot auc, diff, and forgetting ranks
             """
             gen_metrics = GenerateMetrics(job, force_generate=False)
-            gen_metrics.gen_train_metrics_by_epoch()
+            train_metrics = gen_metrics.gen_train_metrics_by_epoch()
+            noise_metrics = gen_metrics.gen_noise_metrics_by_epoch()
 
         print(f"Jobs finished at t={datetime.datetime.now()}")

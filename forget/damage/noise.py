@@ -100,6 +100,12 @@ def apply_additive_noise(param, param_noise, scale):
 def apply_multiplicative_noise(param, param_noise, scale):
     param.mul_(1. + param_noise * scale)
 
+def noise_scales(job):
+    return np.linspace(
+        float(job.hparams["noise scale min"]),
+        float(job.hparams["noise scale max"]),
+        int(job.hparams["noise num points"]))
+
 def interpolate_noise(job, model_state, noise_state, name_contains):
     noise_type = job.hparams['noise type']
     if noise_type == 'additive':
@@ -109,12 +115,9 @@ def interpolate_noise(job, model_state, noise_state, name_contains):
     else:
         raise ValueError(f"config value 'noise type'={noise_type} is undefined")
     # linear scaling
-    noise_scales = np.linspace(
-        float(job.hparams["noise scale min"]),
-        float(job.hparams["noise scale max"]),
-        int(job.hparams["noise num points"]))
+    scales = noise_scales(job)
     # interpolate noise with model
-    for scale in noise_scales:
+    for scale in scales:
         noisy_model = apply_noise(job, model_state, noise_state, scale,
                             combine_fn, name_contains)
         yield noisy_model, scale

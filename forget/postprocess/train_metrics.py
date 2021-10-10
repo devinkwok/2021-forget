@@ -3,6 +3,7 @@ import time
 import torch
 import numpy as np
 from forget.postprocess.transforms import *
+from forget.damage.noise import noise_scales
 from forget.postprocess.plot_metrics import PlotMetrics
 
 class GenerateMetrics():
@@ -15,6 +16,7 @@ class GenerateMetrics():
         self.labels = np.array([y for _, y in eval_dataset])
         self.iter_mask = mask_iter_by_batch(int(self.job.hparams['batch size']),
             len(self.job.get_train_dataset()), 0, len(self.labels))
+        self.scale = noise_scales(self.job)
 
     def _transform(self, name, source, transform_fn):
         start_time = time.perf_counter()
@@ -52,8 +54,11 @@ class GenerateMetrics():
             outputs = torch.load(file, map_location=torch.device('cpu'))
             yield file, outputs
 
-    def noise_by_replicate():  # source_iter
-        pass #TODO
+    def noise_by_sample(self, noise_dir, replicate_name):  # source_iter
+        for i in range(int(self.job.hparam['num noise samples'])):
+            file = os.path.join(noise_dir, f'logits-{replicate_name}-noise{i}.pt')
+            outputs = torch.load(file, map_location=torch.device('cpu'))
+            yield file, outputs['logit']
 
     def batch_forgetting(self, output_prob_by_iter):  # as implemented by Toneva, same as Nikhil'ss
         return forgetting_events(output_prob_by_iter, iter_mask=self.iter_mask)
@@ -70,13 +75,16 @@ class GenerateMetrics():
     def signed_prob(self, x):
         return signed_prob(x, self.labels)
 
+    def first_forget(self, x):
+        return first_forget(x, self.scale)
+
     def gen_train_metrics_by_epoch(self):
         plotter = PlotMetrics(self.job)
         # R * E * (I x N x C) (list of R iterators over E)
         # R is replicates, E is epochs, I iters, N examples, C classes
         print("Loading signed probabilities...")
         softmaxes = [self.transform_inplace(self.replicate_by_epoch(r),
-                        softmax) for r, _ in self.job.replicate_dirs()]
+                        softmax) for r, _ in self.job.replicates()]
         # collate over E and transform over C to get R * (E x I x N)
         s_prob = [self.transform_collate(f'sgd_rep{i}', s,
                 self.signed_prob) for i, s in enumerate(softmaxes)]
@@ -99,27 +107,60 @@ class GenerateMetrics():
         }
         print("Plotting...")
         # plot by train/test/all
-        for example in range(0, 10000, 2000):
-            # plot curves for selected examples
-            curves = s_prob[..., example:example+1]
-            print(curves.shape)
-            # reshape to (R x EI x N)
-            curves = curves.reshape(-1, n_epoch * n_iter, curves.shape[-1])
-            print(curves.shape)
-            # transpose to (N x R x EI)
-            curves = np.transpose(curves, axes=(2, 0, 1))
-            print(curves.shape)
-            plotter.plot_score_curves('sgd_ex' + str(example), curves)
-
         for include in ['all', 'train', 'test']:
             name = f'-{include}'
             # label distribution
             plotter.plot_class_counts(name,
                     self._train_eval_filter(self.labels, include))
-            # plot mean over epochs (R x N)
-            plotter.plot_metrics(metrics, name,
-                filter=lambda x: np.mean(self._train_eval_filter(x, include), axis=1))
-            # plot by epoch
+            # probability curves
+            filtered_prob = self._train_eval_filter(s_prob)
+            mean_over_epochs = {f'{k}{name}': np.mean(self._train_eval_filter(v), axis=1) \
+                                for k, v in metrics.items()}
+            plotter.plot_curves_by_rank(filtered_prob, mean_over_epochs)
+            # plot metric over epochs (R x N)
+            plotter.plot_metric_rank_qq(mean_over_epochs)
+            plotter.plot_metric_scatter_array(name, mean_over_epochs)
+            plotter.plot_metric_rank_corr_array(name, mean_over_epochs)
+            # plot metrics per epoch
             for i in range(n_epoch):
-                plotter.plot_metrics(metrics_by_epoch, f'{name}-ep{i}',
-                    filter=lambda x: self._train_eval_filter(x[:, i, :], include))
+                by_epoch = {f'{k}{name}-ep{i}': self._train_eval_filter(v[:, i, :], include) \
+                            for k, v in metrics_by_epoch.items()}
+                plotter.plot_metric_scatter_array(name, by_epoch)
+                plotter.plot_metric_rank_corr_array(name, by_epoch)
+        return metrics
+
+    def gen_noise_metrics_by_epoch(self, noise_type, name_contains):
+        plotter = PlotMetrics(self.job)
+        # R * S * (I x N x C) (list of R iterators over S)
+        # R is replicates, S is noise samples, I iters, N examples, C classes
+        print("Loading signed probabilities...")
+        noise_dir = f'logits_noise_{noise_type}_{"-".join(name_contains)}'
+        softmaxes = [self.transform_inplace(self.noise_by_sample(noise_dir, r),
+                        softmax) for _, r in self.job.replicates()]
+        # collate over S and transform over C to get R * (S x I x N)
+        s_prob = [self.transform_collate(f'noise_sample{i}', s,
+                self.signed_prob) for i, s in enumerate(softmaxes)]
+        s_prob = np.stack(s_prob, axis=0)  # stack to (R x S x I x N)
+        print("Loading metrics...")
+        # summarizes over I for (R x S x N)
+        metrics = {
+            'noise_mean_prob': self.transform_collate('noise', s_prob, mean_prob),
+            'noise_diff_norm': self.transform_collate('noise', s_prob, diff_norm),
+            'first_forget': self.transform_collate('noise', s_prob, self.first_forget),
+        }
+        print("Plotting...")
+        # plot by train/test/all
+        for include in ['all', 'train', 'test']:
+            name = f'-{include}'
+            metrics_by_noise = {f'{k}-{include}': self._train_eval_filter(v) \
+                                for k, v in metrics.items()}
+            filtered_prob = self._train_eval_filter(s_prob)
+            plotter.plot_curves_by_rank(filtered_prob, metrics_by_noise)
+            # plot (R, S, N), mean over S (noises)
+            plotter.plot_metric_scatter_array(name, metrics_by_noise)
+            plotter.plot_metric_rank_corr_array(name, metrics_by_noise)
+            # plot (S, R, N), mean over R (inits)
+            metrics_by_rep = {k: v.transpose(1, 0, 2) for k, v in metrics_by_noise.items()}
+            plotter.plot_metric_scatter_array(name, metrics_by_rep)
+            plotter.plot_metric_rank_corr_array(name, metrics_by_rep)
+        return metrics

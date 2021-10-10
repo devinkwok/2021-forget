@@ -164,7 +164,8 @@ def forgetting_events(output_prob_by_iter: np.ndarray,
         new_shape[-2] = n_unmasked * n_repeats
         output_prob_by_iter = output_prob_by_iter[..., iter_mask].reshape(new_shape)
     is_correct = (output_prob_by_iter > 0)  # use sign to indicate whether correct/incorrect
-    diff = np.logical_and(is_correct[..., :-1, :], np.logical_not(is_correct[..., 1:, :]))
+    diff = np.logical_and(is_correct[..., :-1, :],
+            np.logical_not(is_correct[..., 1:, :]))
     n_forget = np.sum((diff == 1), axis=-2) # correct - incorrect is 1 - 0
     return n_forget
 
@@ -192,6 +193,32 @@ def mask_iter_by_batch(train_batch_size, n_train_examples,
     example_idx = np.arange(example_end_idx - example_start_idx)
     iter_mask[iter_idx, example_idx] = True
     return iter_mask
+
+
+def first_forget(output_prob_by_iter: np.ndarray, scale=None) -> np.ndarray:
+    """Finds index of first forgetting event (assuming example is learned at time 0).
+    If example was never learned, return 0 or scale[0].
+    If example is never forgotten, return N
+
+    Args:
+        output_prob_by_iter (np.ndarray): signed_prob scores
+            with dimensions $(\dots, I \times N)$,
+        scale (np.ndarray, optional): If set, map indexes to
+            these values. Has dimension (I+1). Defaults to None.
+
+    Returns:
+        np.ndarray: array of $(\dots, N)$ index or
+            iteration value of first forgetting event.
+    """
+    is_correct = (output_prob_by_iter > 0)
+    # cumulative product is 1 until incorrect, then 0
+    # add up all 1's to get iter of first forgetting event
+    # 0 if all incorrect, shape[-2] if all correct
+    first = np.sum(np.cumprod(is_correct, axis=-2), axis=-2)
+    if scale is not None:
+        assert scale.shape == (output_prob_by_iter.shape[-2] + 1,)
+        first = np.take(scale, first)
+    return first
 
 
 def stats_str(array):

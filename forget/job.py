@@ -15,7 +15,7 @@ class Job():
         self.hparams = hparams
         self.data_dir = data_dir
         self.save_path = os.path.join(exp_path, name)
-        for subdir, _ in self.replicate_dirs():
+        for subdir, _ in self.replicates():
             Path(subdir).mkdir(parents=True, exist_ok=True)
 
     @property
@@ -26,7 +26,7 @@ class Job():
     def n_epochs(self):
         return int(self.hparams['num epochs']) + 1
 
-    def replicate_dirs(self):
+    def replicates(self):
         for i in range(self.n_replicates):
             name = f'model{i}'
             yield os.path.join(self.save_path, name), name
@@ -103,7 +103,7 @@ class Job():
         # use list indexing to comprehend idx (+1 includes init at epoch 0)
         epochs = [x for x in range(self.n_epochs)]
         epoch = epochs[epoch_idx]
-        for dir, name in self.replicate_dirs():
+        for dir, name in self.replicates():
             file = os.path.join(dir, f'epoch={epoch}.pt')
             if to_cpu:
                 model = torch.load(file, map_location=torch.device('cpu'))
