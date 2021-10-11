@@ -16,7 +16,9 @@ class GenerateMetrics():
         self.labels = np.array([y for _, y in eval_dataset])
         self.iter_mask = mask_iter_by_batch(int(self.job.hparams['batch size']),
             len(self.job.get_train_dataset()), 0, len(self.labels))
-        self.scale = noise_scales(self.job)
+        scale = noise_scales(self.job)
+        last_scale_item = [scale[-1] + scale[0]]
+        self.scale = np.concatenate([scale, last_scale_item])
 
     def _transform(self, name, source, transform_fn):
         start_time = time.perf_counter()
@@ -113,7 +115,7 @@ class GenerateMetrics():
             plotter.plot_class_counts(name,
                     self._train_eval_filter(self.labels, include))
             # probability curves
-            filtered_prob = self._train_eval_filter(s_prob, include)
+            filtered_prob = self._train_eval_filter(s_prob_no_epoch, include).squeeze(axis=1)
             mean_over_epochs = {f'{k}{name}': np.mean(
                 self._train_eval_filter(v, include), axis=1) \
                 for k, v in metrics.items()}
@@ -160,10 +162,10 @@ class GenerateMetrics():
                                 for k, v in metrics.items()}
             plotter.plot_curves_by_rank(filtered_prob, metrics_by_noise)
             # plot (R, S, N), mean over S (noises)
-            plotter.plot_metric_scatter_array(name, metrics_by_noise)
-            plotter.plot_metric_rank_corr_array(name, metrics_by_noise)
+            plotter.plot_metric_scatter_array(f'-sample-{name}', metrics_by_noise)
+            plotter.plot_metric_rank_corr_array(f'-sample-{name}', metrics_by_noise)
             # plot (S, R, N), mean over R (inits)
             metrics_by_rep = {k: v.transpose(1, 0, 2) for k, v in metrics_by_noise.items()}
-            plotter.plot_metric_scatter_array(name, metrics_by_rep)
-            plotter.plot_metric_rank_corr_array(name, metrics_by_rep)
+            plotter.plot_metric_scatter_array(f'-init-{name}', metrics_by_rep)
+            plotter.plot_metric_rank_corr_array(f'-init-{name}', metrics_by_rep)
         return metrics
