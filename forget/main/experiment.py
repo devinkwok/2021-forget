@@ -73,7 +73,8 @@ class run_experiment:
             """New noise evaluation
             """
             # sample_noise(job)
-            # eval_noise(job, name_contains=['conv'])
+            layer_filter = ['conv']
+            # eval_noise(job, name_contains=layer_filter)
 
             """Plot model weights
             """
@@ -95,6 +96,7 @@ class run_experiment:
             """
             gen_metrics = GenerateMetrics(job, force_generate=False)
             train_metrics = gen_metrics.gen_train_metrics_by_epoch()
-            noise_metrics = gen_metrics.gen_noise_metrics_by_epoch()
+            noise_metrics = gen_metrics.gen_noise_metrics_by_epoch(
+                            job.hparams['noise type'], layer_filter)
 
         print(f"Jobs finished at t={datetime.datetime.now()}")

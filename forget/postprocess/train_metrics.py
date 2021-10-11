@@ -55,7 +55,7 @@ class GenerateMetrics():
             yield file, outputs
 
     def noise_by_sample(self, noise_dir, replicate_name):  # source_iter
-        for i in range(int(self.job.hparam['num noise samples'])):
+        for i in range(int(self.job.hparams['num noise samples'])):
             file = os.path.join(noise_dir, f'logits-{replicate_name}-noise{i}.pt')
             outputs = torch.load(file, map_location=torch.device('cpu'))
             yield file, outputs['logit']
@@ -136,7 +136,8 @@ class GenerateMetrics():
         # R * S * (I x N x C) (list of R iterators over S)
         # R is replicates, S is noise samples, I iters, N examples, C classes
         print("Loading signed probabilities...")
-        noise_dir = f'logits_noise_{noise_type}_{"-".join(name_contains)}'
+        noise_dir = os.path.join(self.job.save_path,
+                    f'logits_noise_{noise_type}_{"-".join(name_contains)}')
         softmaxes = [self.transform_inplace(self.noise_by_sample(noise_dir, r),
                         softmax) for _, r in self.job.replicates()]
         # collate over S and transform over C to get R * (S x I x N)

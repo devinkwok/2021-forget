@@ -133,7 +133,7 @@ def diff_norm(output_prob_by_iter: np.ndarray,
 
 
 def forgetting_events(output_prob_by_iter: np.ndarray,
-            iter_mask: np.ndarray=None) -> np.ndarray:
+            iter_mask: np.ndarray=None, never_learned_value=None) -> np.ndarray:
     """Counts number of forgetting events, as defined by Toneva et al., 2018.
     Specifically, an example is forgotten if it is incorrect at time t+1 and
     correct at time t.
@@ -167,6 +167,12 @@ def forgetting_events(output_prob_by_iter: np.ndarray,
     diff = np.logical_and(is_correct[..., :-1, :],
             np.logical_not(is_correct[..., 1:, :]))
     n_forget = np.sum((diff == 1), axis=-2) # correct - incorrect is 1 - 0
+    # set examples which were never learned to some value
+    if never_learned_value is None:
+        never_learned_value = np.max(n_forget) * 2
+    # never_learned is 0 forgetting AND incorrect at last iter
+    never_learned = np.logical_not(np.any(is_correct, axis=-2))
+    n_forget[never_learned] = never_learned_value
     return n_forget
 
 

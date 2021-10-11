@@ -11,20 +11,21 @@ class PlotMetrics():
         self.job = job
 
     def _color(self, i, n):
-        return plt.cm.jet(i / n)
+        return plt.cm.viridis(i / n)
 
     def plot_class_counts(self, name, labels):
         values, counts = np.unique(labels, return_counts=True)
         plt.bar(values, counts)
         self.job.save_obj_to_subdir(plt, 'plot-metrics', f'counts_{name}')
 
-    def plot_curves(self, name, groups):
+    def plot_curves(self, name, groups, ylim=None):
         # groups is (G x L x I)
         # G is groups of same colored lines, L is lines, I is iterations (y-values)
         f = plt.figure()
         f.set_figwidth(16)
         f.set_figheight(8)
-        plt.ylim(-1., 1.)
+        if ylim is not None:
+            plt.ylim(*ylim)
         plt.title(name)
         # dotted line at 0
         plt.hlines(0., 0, groups.shape[-1], colors='black', linestyles='dotted')
@@ -52,7 +53,7 @@ class PlotMetrics():
                 ], axis=2)
             selected = selected[:n_rep, :, :]  # only include n_rep curves
             # reshape from (R, I, N) to (N, R, I) so that colors indicate rank
-            self.plot_curves(f'{name}-top{n_rank}', selected.transpose(2, 0, 1))
+            self.plot_curves(f'{name}-top{n_rank}', selected.transpose(2, 0, 1), ylim=(-1., 1.))
 
     def plot_metric_rank_qq(self, dict_metrics):
         for name, metric in dict_metrics.items():
@@ -67,7 +68,8 @@ class PlotMetrics():
         # rank along last dimension
         sorted_idx = np.argsort(metrics, axis=-1)
         rank_idx = np.arange(metrics.shape[-1])
-        ranks = np.put_along_axis(np.empty_like(sorted_idx), sorted_idx, rank_idx, axis=-1)
+        ranks = np.empty_like(sorted_idx)
+        np.put_along_axis(ranks, sorted_idx, rank_idx, axis=-1)
         return ranks
 
     def plot_metric_scatter_array(self, suffix, dict_metrics):
@@ -84,8 +86,13 @@ class PlotMetrics():
             means.append(mean_metric)
             # rank version of metric
             names.append(name + '_rk')
-            metrics.append(self.metrics_to_ranks(metric))
-            means.append(self.metrics_to_ranks(mean_metric))  # rank of means (not mean of ranks)
+            ranks = self.metrics_to_ranks(metric)
+            metrics.append(ranks)
+            # mean of ranks, don't use rank of means, i.e.
+            # means.append(self.metrics_to_ranks(mean_metric))
+            # since if reps have different ranges their mean will be biased
+            # whereas ranks have fixed scale
+            means.append(np.mean(ranks, axis=-2, keepdims=True))
         # scatter plot for every combination of order, metric
         n_plt = len(names)
         fig, axes = plt.subplots(n_plt, n_plt, figsize=(3 * n_plt, 3 *n_plt))
@@ -96,9 +103,9 @@ class PlotMetrics():
                 if j == 0:
                     ax.set_ylabel(name_row)
                 if i <= j:
-                    x_data = metrics[j]
-                    y_data = np.expand_dims(means[i], axis=-2)
-                    y_data = y_data.repeat(x_data.shape[-2], axis=-2)
+                    x_data = means[j]
+                    y_data = metrics[i]
+                    x_data, y_data = np.broadcast_arrays(x_data, y_data)
                     ax.set_xlabel('mean')
                 else:
                     x_data = metrics[j]
@@ -141,7 +148,8 @@ class PlotMetrics():
                     for m1, m2 in zip(metric_row, metric_col):  # iterate over S
                         correlations.append(np.array([  # iterate over R
                             spearmanr(a, b)[0] for a, b in zip(m1, m2)]))
-                correlations = np.concatenate(correlations, axis=0)
+                # plot squared values so they don't fall below 0
+                correlations = np.square(np.concatenate(correlations, axis=0))
                 # plot rank correlations as box plot
                 ax.boxplot(correlations)
                 if i == 0:
