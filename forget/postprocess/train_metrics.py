@@ -176,22 +176,22 @@ class GenerateMetrics():
                                 for k, v in noise_metrics.items()}
             # plot (R, S, N), mean over S (noises)
             metrics = {**train_metrics, **metrics_by_noise}
-            plotter.plot_metric_scatter_array(f'-sample-{include}', metrics)
-            plotter.plot_metric_rank_corr_array(f'-sample-{include}', metrics)
+            plotter.plot_metric_scatter_array(f'-train-noise-sample-{include}', metrics)
+            plotter.plot_metric_rank_corr_array(f'-train-noise-sample-{include}', metrics)
             # plot (S, R, N), mean over R (inits)
             metrics_by_rep = {k: v.transpose(1, 0, 2) for k, v in metrics_by_noise.items()}
             metrics = {**train_metrics, **metrics_by_rep}
-            plotter.plot_metric_scatter_array(f'-init-{include}', metrics)
-            plotter.plot_metric_rank_corr_array(f'-init-{include}', metrics)
-            for i in range(self.job.hparams['num epochs']):
+            plotter.plot_metric_scatter_array(f'-train-noise-init-{include}', metrics)
+            plotter.plot_metric_rank_corr_array(f'-train-noise-init-{include}', metrics)
+            for i in range(int(self.job.hparams['num epochs'])):
                 by_epoch = {f'{k}-{include}-ep{i}': self._train_eval_filter(
                             v[:, i, :], include) \
                             for k, v in train_metrics_by_epoch.items()}
                 # plot (R, S, N), mean over S (noises)
                 metrics = {**by_epoch, **metrics_by_noise}
-                plotter.plot_metric_scatter_array(f'-{include}-ep{i}', metrics)
-                plotter.plot_metric_rank_corr_array(f'-{include}-ep{i}', metrics)
+                plotter.plot_metric_scatter_array(f'-train-noise-sample-{include}-ep{i}', metrics)
+                plotter.plot_metric_rank_corr_array(f'-train-noise-sample-{include}-ep{i}', metrics)
                 # plot (S, R, N), mean over R (inits)
                 metrics = {**by_epoch, **metrics_by_rep}
-                plotter.plot_metric_scatter_array(f'-{include}-ep{i}', metrics)
-                plotter.plot_metric_rank_corr_array(f'-{include}-ep{i}', metrics)
+                plotter.plot_metric_scatter_array(f'-train-noise-init-{include}-ep{i}', metrics)
+                plotter.plot_metric_rank_corr_array(f'-train-noise-init-{include}-ep{i}', metrics)
