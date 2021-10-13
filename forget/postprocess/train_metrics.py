@@ -99,13 +99,13 @@ class GenerateMetrics():
         metrics = {
             'sgd_mean_prob': self.transform_collate('sgd', s_prob, mean_prob),
             'sgd_diff_norm': self.transform_collate('sgd', s_prob, diff_norm),
-            'sgd_forgetting': self.transform_collate('sgd', s_prob_no_epoch, forgetting_events),
-            'sgd_batch_forgetting': self.transform_collate('sgd', s_prob_no_epoch, self.batch_forgetting),
+            'sgd_forget': self.transform_collate('sgd', s_prob_no_epoch, forgetting_events),
+            'sgd_batch_forget': self.transform_collate('sgd', s_prob_no_epoch, self.batch_forgetting),
         }
         metrics_by_epoch = {
             'sgd_mean_prob': self.transform_collate('sgd', s_prob, mean_prob),
             'sgd_diff_norm': self.transform_collate('sgd', s_prob, diff_norm),
-            'sgd_forgetting': self.transform_collate('sgd_per_ep', s_prob, forgetting_events),
+            'sgd_forget': self.transform_collate('sgd_per_ep', s_prob, forgetting_events),
         }
         print("Plotting...")
         # plot by train/test/all
@@ -129,11 +129,11 @@ class GenerateMetrics():
                 by_epoch = {f'{k}{name}-ep{i}': self._train_eval_filter(
                             v[:, i, :], include) \
                             for k, v in metrics_by_epoch.items()}
-                plotter.plot_metric_scatter_array(name, by_epoch)
-                plotter.plot_metric_rank_corr_array(name, by_epoch)
-        return metrics
+                plotter.plot_metric_scatter_array(f'{name}-ep{i}', by_epoch)
+                plotter.plot_metric_rank_corr_array(f'{name}-ep{i}', by_epoch)
+        return metrics, metrics_by_epoch
 
-    def gen_noise_metrics_by_epoch(self, noise_type, name_contains):
+    def gen_noise_metrics(self, noise_type, name_contains):
         plotter = PlotMetrics(self.job)
         # R * S * (I x N x C) (list of R iterators over S)
         # R is replicates, S is noise samples, I iters, N examples, C classes
@@ -156,16 +156,42 @@ class GenerateMetrics():
         print("Plotting...")
         # plot by train/test/all
         for include in ['all', 'train', 'test']:
-            name = f'-{include}'
             filtered_prob = self._train_eval_filter(s_prob, include)
             metrics_by_noise = {f'{k}-{include}': self._train_eval_filter(v, include) \
                                 for k, v in metrics.items()}
             plotter.plot_curves_by_rank(filtered_prob, metrics_by_noise)
             # plot (R, S, N), mean over S (noises)
-            plotter.plot_metric_scatter_array(f'-sample-{name}', metrics_by_noise)
-            plotter.plot_metric_rank_corr_array(f'-sample-{name}', metrics_by_noise)
+            plotter.plot_metric_scatter_array(f'-sample-{include}', metrics_by_noise)
+            plotter.plot_metric_rank_corr_array(f'-sample-{include}', metrics_by_noise)
             # plot (S, R, N), mean over R (inits)
             metrics_by_rep = {k: v.transpose(1, 0, 2) for k, v in metrics_by_noise.items()}
-            plotter.plot_metric_scatter_array(f'-init-{name}', metrics_by_rep)
-            plotter.plot_metric_rank_corr_array(f'-init-{name}', metrics_by_rep)
+            plotter.plot_metric_scatter_array(f'-init-{include}', metrics_by_rep)
+            plotter.plot_metric_rank_corr_array(f'-init-{include}', metrics_by_rep)
         return metrics
+
+    def gen_train_to_noise_metrics(self, train_metrics, train_metrics_by_epoch, noise_metrics):
+        plotter = PlotMetrics(self.job)
+        for include in ['all', 'train', 'test']:
+            metrics_by_noise = {f'{k}-{include}': self._train_eval_filter(v, include) \
+                                for k, v in noise_metrics.items()}
+            # plot (R, S, N), mean over S (noises)
+            metrics = {**train_metrics, **metrics_by_noise}
+            plotter.plot_metric_scatter_array(f'-sample-{include}', metrics)
+            plotter.plot_metric_rank_corr_array(f'-sample-{include}', metrics)
+            # plot (S, R, N), mean over R (inits)
+            metrics_by_rep = {k: v.transpose(1, 0, 2) for k, v in metrics_by_noise.items()}
+            metrics = {**train_metrics, **metrics_by_rep}
+            plotter.plot_metric_scatter_array(f'-init-{include}', metrics)
+            plotter.plot_metric_rank_corr_array(f'-init-{include}', metrics)
+            for i in range(self.job.hparams['num epochs']):
+                by_epoch = {f'{k}-{include}-ep{i}': self._train_eval_filter(
+                            v[:, i, :], include) \
+                            for k, v in train_metrics_by_epoch.items()}
+                # plot (R, S, N), mean over S (noises)
+                metrics = {**by_epoch, **metrics_by_noise}
+                plotter.plot_metric_scatter_array(f'-{include}-ep{i}', metrics)
+                plotter.plot_metric_rank_corr_array(f'-{include}-ep{i}', metrics)
+                # plot (S, R, N), mean over R (inits)
+                metrics = {**by_epoch, **metrics_by_rep}
+                plotter.plot_metric_scatter_array(f'-{include}-ep{i}', metrics)
+                plotter.plot_metric_rank_corr_array(f'-{include}-ep{i}', metrics)

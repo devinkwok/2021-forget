@@ -96,7 +96,7 @@ class run_experiment:
             """
             gen_metrics = GenerateMetrics(job, force_generate=False)
             train_metrics = gen_metrics.gen_train_metrics_by_epoch()
-            noise_metrics = gen_metrics.gen_noise_metrics_by_epoch(
+            noise_metrics = gen_metrics.gen_noise_metrics(
                             job.hparams['noise type'], layer_filter)
 
         print(f"Jobs finished at t={datetime.datetime.now()}")
