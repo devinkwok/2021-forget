@@ -7,8 +7,9 @@ import matplotlib.pyplot as plt
 
 class PlotMetrics():
 
-    def __init__(self, job):
+    def __init__(self, job, subdir='plot-metrics'):
         self.job = job
+        self.subdir = subdir
 
     def _color(self, i, n):
         return plt.cm.viridis(i / n)
@@ -105,11 +106,11 @@ class PlotMetrics():
                 if i <= j:
                     x_data = means[j]
                     y_data = metrics[i]
-                    x_data, y_data = np.broadcast_arrays(x_data, y_data)
                     ax.set_xlabel('mean')
                 else:
                     x_data = metrics[j]
                     y_data = metrics[i]
+                print(f'\tbroadcasting x={x_data}, y={y_data}')
                 x_data, y_data = np.broadcast_arrays(x_data, y_data)
                 ax.scatter(x_data.flatten(), y_data.flatten(), marker='.', s=4, alpha=0.02)
         self.job.save_obj_to_subdir(plt, 'plot-metrics',
@@ -137,7 +138,6 @@ class PlotMetrics():
                 # e.g. (R, N), (S, R, N) -> for each R, correlate (R, N) and (..., N) over all S
                 # e.g. (N), (S, R, N) -> correlate (N) over all R and all S
                 # e.g. (S, R, N) with itself -> correlate r_n with r_{n+1} for 1...N, then repeat for all S
-                metric_row, metric_col = np.broadcast_arrays(metric_row, metric_col)
                 correlations = []
                 if i == j:  # enumerate over R and do pairwise for S*(R-1) corr
                     # spearmanr returns (rho, p-value), ignore the p-value
@@ -145,6 +145,8 @@ class PlotMetrics():
                         correlations.append(np.array(  # iterate over R
                             [spearmanr(a, b)[0] for a, b in zip(metric[:-1], metric[1:])]))
                 else:  # do pairwise between two metrics over each of R for S*R corr
+                    metric_row, metric_col = np.broadcast_arrays(metric_row, metric_col)
+                    print(f'\tbroadcasting a={metric_row}, b={metric_col}')
                     for m1, m2 in zip(metric_row, metric_col):  # iterate over S
                         correlations.append(np.array([  # iterate over R
                             spearmanr(a, b)[0] for a, b in zip(m1, m2)]))

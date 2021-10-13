@@ -16,6 +16,9 @@ class GenerateMetrics():
         self.labels = np.array([y for _, y in eval_dataset])
         self.iter_mask = mask_iter_by_batch(int(self.job.hparams['batch size']),
             len(self.job.get_train_dataset()), 0, len(self.labels))
+        # shift iter_mask back by 1 iter, this is because logits were recorded after SGD, not before
+        # and Toneva counts forgetting based on example accuracy before SGD update
+        self.iter_mask = np.concatenate([self.iter_mask[1:], self.iter_mask[:1]], axis=0)
         scale = noise_scales(self.job)
         last_scale_item = [scale[-1] + scale[0]]
         self.scale = np.concatenate([scale, last_scale_item])
@@ -134,7 +137,7 @@ class GenerateMetrics():
         return metrics, metrics_by_epoch
 
     def gen_noise_metrics(self, noise_type, name_contains):
-        plotter = PlotMetrics(self.job)
+        plotter = PlotMetrics(self.job, subdir=f'plot-metrics/{noise_type}_{"-".join(name_contains)}')
         # R * S * (I x N x C) (list of R iterators over S)
         # R is replicates, S is noise samples, I iters, N examples, C classes
         print("Loading signed probabilities...")
@@ -172,17 +175,21 @@ class GenerateMetrics():
     def gen_train_to_noise_metrics(self, train_metrics, train_metrics_by_epoch, noise_metrics):
         plotter = PlotMetrics(self.job)
         for include in ['all', 'train', 'test']:
+            metrics = {f'{k}-{include}': self._train_eval_filter(v, include) \
+                                for k, v in train_metrics.items()}
             metrics_by_noise = {f'{k}-{include}': self._train_eval_filter(v, include) \
                                 for k, v in noise_metrics.items()}
             # plot (R, S, N), mean over S (noises)
-            metrics = {**train_metrics, **metrics_by_noise}
-            plotter.plot_metric_scatter_array(f'-train-noise-sample-{include}', metrics)
-            plotter.plot_metric_rank_corr_array(f'-train-noise-sample-{include}', metrics)
+            plotter.plot_metric_scatter_array(
+                f'-train-noise-sample-{include}', {**metrics, **metrics_by_noise})
+            plotter.plot_metric_rank_corr_array(
+                f'-train-noise-sample-{include}', {**metrics, **metrics_by_noise})
             # plot (S, R, N), mean over R (inits)
             metrics_by_rep = {k: v.transpose(1, 0, 2) for k, v in metrics_by_noise.items()}
-            metrics = {**train_metrics, **metrics_by_rep}
-            plotter.plot_metric_scatter_array(f'-train-noise-init-{include}', metrics)
-            plotter.plot_metric_rank_corr_array(f'-train-noise-init-{include}', metrics)
+            plotter.plot_metric_scatter_array(
+                '-train-noise-init-{include}', {**metrics, **metrics_by_rep})
+            plotter.plot_metric_rank_corr_array(
+                f'-train-noise-init-{include}', {**metrics, **metrics_by_rep})
             for i in range(int(self.job.hparams['num epochs'])):
                 by_epoch = {f'{k}-{include}-ep{i}': self._train_eval_filter(
                             v[:, i, :], include) \
