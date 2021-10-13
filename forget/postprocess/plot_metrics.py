@@ -110,7 +110,7 @@ class PlotMetrics():
                 else:
                     x_data = metrics[j]
                     y_data = metrics[i]
-                print(f'\tbroadcasting x={x_data}, y={y_data}')
+                print(f'\tbroadcasting x={x_data.shape}, y={y_data.shape}')
                 x_data, y_data = np.broadcast_arrays(x_data, y_data)
                 ax.scatter(x_data.flatten(), y_data.flatten(), marker='.', s=4, alpha=0.02)
         self.job.save_obj_to_subdir(plt, 'plot-metrics',
@@ -146,7 +146,7 @@ class PlotMetrics():
                             [spearmanr(a, b)[0] for a, b in zip(metric[:-1], metric[1:])]))
                 else:  # do pairwise between two metrics over each of R for S*R corr
                     metric_row, metric_col = np.broadcast_arrays(metric_row, metric_col)
-                    print(f'\tbroadcasting a={metric_row}, b={metric_col}')
+                    print(f'\tbroadcasting a={metric_row.shape}, b={metric_col.shape}')
                     for m1, m2 in zip(metric_row, metric_col):  # iterate over S
                         correlations.append(np.array([  # iterate over R
                             spearmanr(a, b)[0] for a, b in zip(m1, m2)]))
