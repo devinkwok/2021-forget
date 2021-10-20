@@ -151,6 +151,7 @@ def forgetting_events(output_prob_by_iter: np.ndarray,
         np.ndarray: array of $(\dots, N)$ forgetting counts.
     """
     if iter_mask is not None:
+        assert len(iter_mask.shape) == 2
         assert output_prob_by_iter.shape[-1] == iter_mask.shape[-1]
         # mask must have same number of True sampling points for every example
         total = np.sum(iter_mask, axis=-2)
@@ -159,7 +160,8 @@ def forgetting_events(output_prob_by_iter: np.ndarray,
         # repeat mask in I dim until it fills output_prob_by_iter
         assert output_prob_by_iter.shape[-2] % iter_mask.shape[-2] == 0
         n_repeats = output_prob_by_iter.shape[-2] // iter_mask.shape[-2]
-        iter_mask = iter_mask.repeat(n_repeats, axis=-2)
+        iter_mask = np.expand_dims(iter_mask, axis=0).repeat(
+                    n_repeats, axis=0).reshape(-1, iter_mask.shape[-1])
         new_shape = list(output_prob_by_iter.shape)
         new_shape[-2] = n_unmasked * n_repeats
         output_prob_by_iter = output_prob_by_iter[..., iter_mask].reshape(new_shape)

@@ -137,7 +137,7 @@ class GenerateMetrics():
         return metrics, metrics_by_epoch
 
     def gen_noise_metrics(self, noise_type, name_contains):
-        plotter = PlotMetrics(self.job, subdir=f'plot-metrics/{noise_type}_{"-".join(name_contains)}')
+        plotter = PlotMetrics(self.job, subdir=f'plot-metrics_{noise_type}_{"-".join(name_contains)}')
         # R * S * (I x N x C) (list of R iterators over S)
         # R is replicates, S is noise samples, I iters, N examples, C classes
         print("Loading signed probabilities...")
@@ -174,7 +174,8 @@ class GenerateMetrics():
 
     def gen_train_to_noise_metrics(self, train_metrics, train_metrics_by_epoch, noise_metrics):
         plotter = PlotMetrics(self.job)
-        for include in ['all', 'train', 'test']:
+        # for include in ['all', 'train', 'test']:
+        for include in ['all']:
             metrics = {f'{k}-{include}': self._train_eval_filter(v, include) \
                                 for k, v in train_metrics.items()}
             metrics_by_noise = {f'{k}-{include}': self._train_eval_filter(v, include) \
@@ -190,7 +191,8 @@ class GenerateMetrics():
                 '-train-noise-init-{include}', {**metrics, **metrics_by_rep})
             plotter.plot_metric_rank_corr_array(
                 f'-train-noise-init-{include}', {**metrics, **metrics_by_rep})
-            for i in range(int(self.job.hparams['num epochs'])):
+            # for i in range(int(self.job.hparams['num epochs'])):
+            for i in [1, 9]:
                 by_epoch = {f'{k}-{include}-ep{i}': self._train_eval_filter(
                             v[:, i, :], include) \
                             for k, v in train_metrics_by_epoch.items()}
