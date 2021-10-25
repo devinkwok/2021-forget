@@ -2,10 +2,10 @@ import torch
 import numpy as np
 import os
 import sys
-from Forget.open_lth.foundations import hparams
-from Forget.open_lth.models import registry
+from open_lth.foundations import hparams
+from open_lth.models import registry
 from pathlib import Path
-from Forget.config import parser
+from forget.main import parser
 
 class damageModel:
     def __init__(self, config_file = os.getcwd()+"/Forget/config/default_config.ini"):
@@ -50,8 +50,8 @@ class damageModel:
         returns an array of length num_points, consisting of models increasingly damaged
         from Gaussian noise with stdev min_noise to max_noise
         """
-        from Forget.open_lth.foundations import hparams
-        from Forget.open_lth.models import registry
+        from open_lth.foundations import hparams
+        from open_lth.models import registry
         
         model.eval()
         self.model_clones = []

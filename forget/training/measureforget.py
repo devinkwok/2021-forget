@@ -43,14 +43,6 @@ class measureForget:
             if torch.argmax(batch_model_output[k]) == labels[k]:
                 self.correctStatistics[self.train_iteration, self.classify_batch_tracker, k] = 1
     
-    def saveForget(self, store_directory):
-        savepath = store_directory + "forgetdata/" + "forgetstatsepoch="+str(self.train_iteration+1) +".pt"
-        torch.save(self.forgetStatistics, savepath)
-
-    def saveCorrect(self, store_directory):
-        savepath = store_directory + "forgetdata/" + "correctstatsepoch="+str(self.train_iteration+1) +".pt"
-        torch.save(self.correctStatistics, savepath)
-
     def resetCorrectStatistics(self):
         self.correctStatistics = torch.zeros(self.nb_epochs, self.num_batches, self.batch_size)
 
