@@ -2,7 +2,7 @@
 #SBATCH --partition=unkillable                      # Ask for unkillable job
 #SBATCH --cpus-per-task=2                     # Ask for 2 CPUs
 #SBATCH --gres=gpu:1                          # Ask for 1 GPU
-#SBATCH --mem=10G
+#SBATCH --mem=24G
 #SBATCH --time=30:00:00
 #SBATCH --output=forget-%j.out
 #SBATCH --error=forget-%j.err
@@ -27,6 +27,6 @@ pip install -r $SRC_DIR/requirements.txt
 # cp -r $HOME/datasets/cifar10.var/cifar10_torchvision/cifar-10-batches-py $SLURM_TMPDIR/data/
 
 python $SRC_DIR/forget/main/run.py \
-    --config_file=$SRC_DIR/config/eval_noise.ini \
+    --config_file=$SRC_DIR/config/exp_noise_perturb.ini \
     --data_dir=$SRC_DIR/data \
     --out_dir=$HOME/out \

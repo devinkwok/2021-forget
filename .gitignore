@@ -1,1 +1,4 @@
 open_lth
+.mypy.ini
+__pycache__
+*.pyc

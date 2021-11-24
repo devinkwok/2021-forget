@@ -1,130 +1,133 @@
-import os
 import time
 import torch
 import numpy as np
+from forget.job import evaluate_one_batch
 
 
-def sample_noise(job):
-    noise_dist = job.hparams['noise distribution']
-    if noise_dist == 'gaussian':
-        noise_fn = sample_gaussians  # this allows other noise distributions
-    else:
-        raise ValueError(f"config value 'noise dist'={noise_dist} is undefined")
+class NoisePerturbation:
+    def __init__(self, job, filter_layer_names_containing=[]):
+        self.job = job
+        self.name_contains = filter_layer_names_containing
+        if type(self.name_contains) is str:
+            self.name_contains = [self.name_contains]
+        self.noise_dist = self.job.hparams["noise distribution"]
+        self.noise_type = self.job.hparams["noise type"]
 
-    # save noise checkpoints
-    def generate_noise(replicate_num):
-        return {'type': noise_dist,
-                'replicate': replicate_num,
-                'model_state_dict': noise_fn(job)}
+    @property
+    def subdir(self):
+        return f'logits_noise_{self.noise_type}_{"-".join(self.name_contains)}'
 
-    for i in range(int(job.hparams['num noise samples'])):
-        # only save if doesn't exist
-        job.cached(lambda: generate_noise(i),
-            'noise_' + noise_dist, f'noise{i}.pt', overwrite=False)
+    @property
+    def noise_scales(self):
+        # always start from 0 to see if example was learned in trained model
+        return np.linspace(
+            0.0,
+            float(self.job.hparams["noise scale max"]),
+            int(self.job.hparams["noise num points"]),
+        )
 
-def eval_noise(job, name_contains=[]):
-    if type(name_contains) is str:
-        name_contains = [name_contains]
-    noise_type = job.hparams['noise type']
-    noise_ckpt_freq = int(job.hparams['noise checkpoint frequency'])
+    def noise_samples(self):
+        if self.noise_dist == "gaussian":
+            noise_fn = self.sample_gaussians  # this allows other noise distributions
+        else:
+            raise ValueError(
+                f"config value 'noise dist'={self.noise_dist} is undefined"
+            )
 
-    # load dataset to CUDA
-    examples, labels = zip(*job.get_eval_dataset())
-    examples = torch.stack(examples, dim=0).cuda()
-    labels = torch.tensor(labels).cuda()
+        # save noise checkpoints
+        for i in range(int(self.job.hparams["num noise samples"])):
+            # only save if doesn't exist
+            def gen_noise():  # name function so that job.cached() prints name
+                return {
+                    "type": self.noise_dist,
+                    "replicate": i,
+                    "model_state_dict": noise_fn(),
+                }
 
-    # load trained models and sample noise
-    model_states = [ckpt['model_state_dict']
-                    for ckpt, _ in job.load_checkpoints_by_epoch(-1)]
-    noise_states = [ckpt['model_state_dict']
-                    for ckpt, _ in job.load_checkpoints_from_dir(
-                        'noise_' + job.hparams['noise distribution'])]
-    # cross product over samples x replicates
-    for m, model in enumerate(model_states):
-        for n, noise in enumerate(noise_states):
-            logits, accuracies, scales = [], [], []
-            for i, (noisy_model, scale) in enumerate(
-                    interpolate_noise(job, model, noise, name_contains)):
-                start_time = time.perf_counter()
-                output, accuracy = evaluate_one_batch(noisy_model, examples, labels)
-                accuracies.append(accuracy)
-                logits.append(output)
-                scales.append(scale)
-                print(f's={scale}, a={accuracy}, t={time.perf_counter() - start_time}')
-                # save noise checkpoint
-                if noise_ckpt_freq > 0 and ((i + 1) % noise_ckpt_freq == 0):
-                    job.save_obj_to_subdir(
-                        {
-                            'noise_epoch': i,
-                            'noise_scale': scale,
-                            'model_state_dict': noisy_model.state_dict(),
-                            'layer_name_contains': name_contains,
-                        },
-                        f'noise_{noise_type}_{"-".join(name_contains)}',
-                        f'model={m}-noise={n}-epoch={i}.pt')
-            # save logits over all noise scales
-            job.save_obj_to_subdir(
-                {
-                    'type': noise_type,
-                    'logit': torch.stack(logits, dim=0),
-                    'scale': scales,
-                    'accuracy': accuracies,
-                },
-                f'logits_noise_{noise_type}_{"-".join(name_contains)}',
-                f'logits-model{m}-noise{n}.pt')
+            yield self.job.cached(gen_noise, "noise_" + self.noise_dist, f"noise{i}.pt")
 
-def sample_gaussians(job):
-    noise = job.get_model()
-    noise.eval()
-    with torch.no_grad():
-        for param in noise.parameters():
-            param.normal_(mean=0, std=1.)
-    return noise.state_dict()
+    def noise_logits(self):
+        # load dataset to CUDA
+        examples, labels = zip(*self.job.get_eval_dataset())
+        examples = torch.stack(examples, dim=0).cuda()
+        labels = torch.tensor(labels).cuda()
 
-def apply_noise(job, model_state, noise_state, scale, combine_fn, name_contains):
-    with torch.no_grad():
-        model = job.get_model(model_state)
-        noise = job.get_model(noise_state)
-        model.eval()
+        # load trained models and sample noise
+        model_states = [
+            ckpt["model_state_dict"]
+            for ckpt, _ in self.job.load_checkpoints_by_epoch(-1)
+        ]
+        noise_states = [ckpt["model_state_dict"] for ckpt in self.noise_samples()]
+        # cross product over samples x replicates
+        for m, model in enumerate(model_states):
+            for n, noise in enumerate(noise_states):
+                # save logits over all noise scales
+                def noise_logit():
+                    logits, accuracies, scales = [], [], []
+                    for noisy_model, scale in self.interpolate_noise(model, noise):
+                        start_time = time.perf_counter()
+                        output, accuracy = evaluate_one_batch(
+                            noisy_model, examples, labels
+                        )
+                        accuracies.append(accuracy)
+                        logits.append(output)
+                        scales.append(scale)
+                        print(
+                            f"\ts={scale}, a={accuracy}, t={time.perf_counter() - start_time}"
+                        )
+                    return {
+                        "type": self.noise_type,
+                        "logit": torch.stack(logits, dim=0),
+                        "scale": scales,
+                        "accuracy": accuracies,
+                    }
+
+                self.job.cached(
+                    noise_logit, self.subdir, f"logits-model{m}-noise{n}.pt"
+                )
+
+    def sample_gaussians(self):
+        noise = self.job.get_model()
         noise.eval()
-        for (name, param), param_noise in zip(
-                    model.named_parameters(), noise.parameters()):
-            if len(name_contains) == 0 or \
-                    any(x in name for x in name_contains):
-                combine_fn(param, param_noise, scale)
-        return model
+        with torch.no_grad():
+            for param in noise.parameters():
+                param.normal_(mean=0, std=1.0)
+        return noise.state_dict()
+
+    def apply_noise(self, model_state, noise_state, scale, combine_fn):
+        with torch.no_grad():
+            model = self.job.get_model(model_state)
+            noise = self.job.get_model(noise_state)
+            model.eval()
+            noise.eval()
+            for (name, param), param_noise in zip(
+                model.named_parameters(), noise.parameters()
+            ):
+                if len(self.name_contains) == 0 or any(
+                    x in name for x in self.name_contains
+                ):
+                    combine_fn(param, param_noise, scale)
+            return model
+
+    def interpolate_noise(self, model_state, noise_state):
+        noise_type = self.job.hparams["noise type"]
+        if noise_type == "additive":
+            combine_fn = apply_additive_noise
+        elif noise_type == "multiplicative":
+            combine_fn = apply_multiplicative_noise
+        else:
+            raise ValueError(f"config value 'noise type'={noise_type} is undefined")
+        # linear scaling
+        scales = self.noise_scales
+        # interpolate noise with model
+        for scale in scales:
+            noisy_model = self.apply_noise(model_state, noise_state, scale, combine_fn)
+            yield noisy_model, scale
+
 
 def apply_additive_noise(param, param_noise, scale):
     param.add_(param_noise * scale)
 
+
 def apply_multiplicative_noise(param, param_noise, scale):
-    param.mul_(1. + param_noise * scale)
-
-def noise_scales(job):
-    return np.linspace(
-        float(job.hparams["noise scale min"]),
-        float(job.hparams["noise scale max"]),
-        int(job.hparams["noise num points"]))
-
-def interpolate_noise(job, model_state, noise_state, name_contains):
-    noise_type = job.hparams['noise type']
-    if noise_type == 'additive':
-        combine_fn = apply_additive_noise
-    elif noise_type == 'multiplicative':
-        combine_fn = apply_multiplicative_noise
-    else:
-        raise ValueError(f"config value 'noise type'={noise_type} is undefined")
-    # linear scaling
-    scales = noise_scales(job)
-    # interpolate noise with model
-    for scale in scales:
-        noisy_model = apply_noise(job, model_state, noise_state, scale,
-                            combine_fn, name_contains)
-        yield noisy_model, scale
-
-def evaluate_one_batch(model, examples, labels):
-    n_examples = labels.shape[0]
-    with torch.no_grad():
-        output = model(examples).detach()
-        accuracy = torch.sum(torch.argmax(output, dim=1) == labels).float() / n_examples
-    return output, accuracy.item()
+    param.mul_(1.0 + param_noise * scale)

@@ -7,8 +7,7 @@ NO_CLASS_IDX = -1
 
 
 def identity(array):
-    """For stacking using transform()
-    """
+    """For stacking using transform()"""
     return array
 
 
@@ -18,8 +17,8 @@ def softmax(logits):
 
 
 def top_k(
-        output_prob: np.ndarray, tgt_labels: np.ndarray, k=5
-    ) -> typing.Tuple[np.ndarray, np.ndarray]:
+    output_prob: np.ndarray, tgt_labels: np.ndarray, k=5
+) -> typing.Tuple[np.ndarray, np.ndarray]:
     """Turns model outputs into a list of the top k scoring classes.
 
     Args:
@@ -44,7 +43,9 @@ def top_k(
     return top_k_classes, scores
 
 
-def n_cumulative_top_classes(top_classes_by_iter: typing.List[np.ndarray]) -> np.ndarray:
+def n_cumulative_top_classes(
+    top_classes_by_iter: typing.List[np.ndarray],
+) -> np.ndarray:
     """Counts the cumulative number of unique top classes for outputs of
     outputs_to_top_classes over multiple iterations.
 
@@ -84,12 +85,16 @@ def signed_prob(output_prob: np.ndarray, tgt_labels: np.ndarray) -> np.ndarray:
     probabilities = output_prob[..., np.arange(len(tgt_labels)), tgt_labels]
     class_labels = np.argmax(output_prob, axis=-1)
     correct_mask = (class_labels == tgt_labels) * 2 - 1
-    signed_prob = probabilities * correct_mask
-    return signed_prob
+    sgn_prob = probabilities * correct_mask
+    return sgn_prob
 
 
-def margin(output_prob: np.ndarray, one_hot_labels: np.ndarray,
-            ord=None, divide_by_classes=True) -> np.ndarray:
+def margin(
+    output_prob: np.ndarray,
+    one_hot_labels: np.ndarray,
+    ord=None,
+    divide_by_classes=True,
+) -> np.ndarray:
     """
     Args:
         output_prob (np.ndarray): output probabilities (after Softmax) with
@@ -130,8 +135,9 @@ def mean_prob(output_prob_by_iter: np.ndarray, divide_by_iters=True) -> np.ndarr
     return auc
 
 
-def diff_norm(output_prob_by_iter: np.ndarray,
-            norm_power=1, divide_by_iters=True) -> np.ndarray:
+def diff_norm(
+    output_prob_by_iter: np.ndarray, norm_power=1, divide_by_iters=True
+) -> np.ndarray:
     """Takes difference of output probabilities between successive iterations,
     and calculates a norm on this differencing operation.
 
@@ -151,14 +157,19 @@ def diff_norm(output_prob_by_iter: np.ndarray,
     if norm_power <= 0:
         norm = np.max(diff, axis=-2)
     else:
-        norm = (np.sum(diff**norm_power, axis=-2) / diff.shape[-2])**(1 / norm_power)
+        norm = (np.sum(diff ** norm_power, axis=-2) / diff.shape[-2]) ** (
+            1 / norm_power
+        )
     if divide_by_iters:
         norm = norm / output_prob_by_iter.shape[-2]
     return norm
 
 
-def forgetting_events(output_prob_by_iter: np.ndarray,
-            iter_mask: np.ndarray=None, never_learned_value=None) -> np.ndarray:
+def forgetting_events(
+    output_prob_by_iter: np.ndarray,
+    iter_mask: np.ndarray = None,
+    never_learned_value=None,
+) -> np.ndarray:
     """Counts number of forgetting events, as defined by Toneva et al., 2018.
     Specifically, an example is forgotten if it is incorrect at time t+1 and
     correct at time t.
@@ -185,26 +196,33 @@ def forgetting_events(output_prob_by_iter: np.ndarray,
         # repeat mask in I dim until it fills output_prob_by_iter
         assert output_prob_by_iter.shape[-2] % iter_mask.shape[-2] == 0
         n_repeats = output_prob_by_iter.shape[-2] // iter_mask.shape[-2]
-        iter_mask = np.expand_dims(iter_mask, axis=0).repeat(
-                    n_repeats, axis=0).reshape(-1, iter_mask.shape[-1])
+        iter_mask = (
+            np.expand_dims(iter_mask, axis=0)
+            .repeat(n_repeats, axis=0)
+            .reshape(-1, iter_mask.shape[-1])
+        )
         new_shape = list(output_prob_by_iter.shape)
         new_shape[-2] = n_unmasked * n_repeats
         output_prob_by_iter = output_prob_by_iter[..., iter_mask].reshape(new_shape)
-    is_correct = (output_prob_by_iter > 0)  # use sign to indicate whether correct/incorrect
-    diff = np.logical_and(is_correct[..., :-1, :],
-            np.logical_not(is_correct[..., 1:, :]))
-    n_forget = np.sum((diff == 1), axis=-2) # correct - incorrect is 1 - 0
+    is_correct = (
+        output_prob_by_iter > 0
+    )  # use sign to indicate whether correct/incorrect
+    diff = np.logical_and(
+        is_correct[..., :-1, :], np.logical_not(is_correct[..., 1:, :])
+    )
+    n_forget = np.sum((diff == 1), axis=-2)  # correct - incorrect is 1 - 0
     # set examples which were never learned to some value
     if never_learned_value is None:
-        never_learned_value = np.max(n_forget) * 2
+        never_learned_value = np.max(n_forget) + 1
     # never_learned is 0 forgetting AND incorrect at last iter
     never_learned = np.logical_not(np.any(is_correct, axis=-2))
     n_forget[never_learned] = never_learned_value
     return n_forget
 
 
-def mask_iter_by_batch(train_batch_size, n_train_examples,
-            example_start_idx, example_end_idx) -> np.ndarray:
+def mask_iter_by_batch(
+    train_batch_size, n_train_examples, example_start_idx, example_end_idx
+) -> np.ndarray:
     """Generates iteration mask for when examples occur in the training batch.
     This mask allows forgetting_events to compute the same forgetting counts
     as calculated by Toneva et al., 2018.
@@ -222,7 +240,9 @@ def mask_iter_by_batch(train_batch_size, n_train_examples,
     """
     n_batch = int(np.ceil(n_train_examples / train_batch_size))
     iter_mask = np.zeros((n_batch, example_end_idx - example_start_idx), dtype=bool)
-    iter_idx = np.arange(n_batch).repeat(train_batch_size)[example_start_idx:example_end_idx]
+    iter_idx = np.arange(n_batch).repeat(train_batch_size)[
+        example_start_idx:example_end_idx
+    ]
     example_idx = np.arange(example_end_idx - example_start_idx)
     iter_mask[iter_idx, example_idx] = True
     return iter_mask
@@ -231,11 +251,11 @@ def mask_iter_by_batch(train_batch_size, n_train_examples,
 def first_forget(output_prob_by_iter: np.ndarray, scale=None) -> np.ndarray:
     """Finds index of first forgetting event (assuming example is learned at time 0).
     If example was never learned, return 0 or scale[0].
-    If example is never forgotten, return N
+    If example is never forgotten, return I or scale[I].
 
     Args:
         output_prob_by_iter (np.ndarray): signed_prob scores
-            with dimensions $(\dots, I \times N)$,
+            with dimensions $(\dots, I \times N)$.
         scale (np.ndarray, optional): If set, map indexes to
             these values. Has dimension (I+1). Defaults to None.
 
@@ -243,7 +263,7 @@ def first_forget(output_prob_by_iter: np.ndarray, scale=None) -> np.ndarray:
         np.ndarray: array of $(\dots, N)$ index or
             iteration value of first forgetting event.
     """
-    is_correct = (output_prob_by_iter > 0)
+    is_correct = output_prob_by_iter > 0
     # cumulative product is 1 until incorrect, then 0
     # add up all 1's to get iter of first forgetting event
     # 0 if all incorrect, shape[-2] if all correct
@@ -254,8 +274,29 @@ def first_forget(output_prob_by_iter: np.ndarray, scale=None) -> np.ndarray:
     return first
 
 
-def stats_str(array):
-    """Helper for pretty printing
+def first_learn(output_prob_by_iter: np.ndarray, scale=None) -> np.ndarray:
+    """Finds index of first learning event after which there is no more forgetting.
+    (assuming example is not learned at time 0).
+    If example was never learned, return I or scale[I].
+    If example is always learned, return 0 or scale[0].
+
+    Args:
+        output_prob_by_iter (np.ndarray): signed_prob scores
+            with dimensions $(\dots, I \times N)$.
+        scale (np.ndarray, optional): If set, map indexes to
+            these values. Has dimension (I+1). Defaults to None.
+
+    Returns:
+        np.ndarray: array of $(\dots, N)$ index or
+            iteration value of first learning event.
     """
-    return '<{:0.4f}|{:0.4f}|{:0.4f}> {}'.format(
-        np.min(array), np.mean(array), np.max(array), array.shape)
+    if scale is None:
+        scale = np.arange(output_prob_by_iter.shape[-2] + 1)
+    return first_forget(np.flip(output_prob_by_iter, axis=-2), scale=np.flip(scale))
+
+
+def stats_str(array):
+    """Helper for pretty printing"""
+    return "<{:0.4f}|{:0.4f}|{:0.4f}> {}".format(
+        np.min(array), np.mean(array), np.max(array), array.shape
+    )

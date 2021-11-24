@@ -1,14 +1,9 @@
-from io import IncrementalNewlineDecoder
-import os
-import sys
 import datetime
-import numpy as np
 from forget.main import parser
 from forget.training import trainer
-from forget.damage import damagemodel
-from forget.postprocess import postprocess
-from forget.damage.noise import sample_noise, eval_noise
-from forget.postprocess.weight_stats import PlotWeights
+from forget.damage.noise import NoisePerturbation
+from forget.main import noise_plots
+from forget.postprocess.plot_metrics import PlotMetrics
 from forget.postprocess.train_metrics import GenerateMetrics
 
 
@@ -19,8 +14,9 @@ class run_experiment:
     1. Pretraining (e.g. load model from OpenLTH)
     2. Training (for each job, pass models onto trainer.py which trains it and stores the data)
     """
+
     def __init__(self):
-        #get config files from parser
+        # get config files from parser
         self.parser = parser.readConfig()
 
         print(f"Jobs started at t={datetime.datetime.now()}")
@@ -32,7 +28,7 @@ class run_experiment:
             print(f"Starting training...")
             for model_idx in range(job.n_replicates):
                 print(f"{job.name} m={model_idx}, t={datetime.datetime.now()}")
-                model_trainer = trainer.train(job.get_model(), job, model_idx)
+                model_trainer = trainer.train(job, model_idx)
                 model_trainer.trainLoop()
 
             """
@@ -40,10 +36,10 @@ class run_experiment:
             """
             print(f"Now processing output...")
 
-            """New noise evaluation
+            """Generate and evaluate model with noise perturbations
             """
-            sample_noise(job)
-            eval_noise(job, name_contains=['conv'])
+            noise_exp = NoisePerturbation(job, filter_layer_names_containing=["conv"])
+            noise_exp.noise_logits()
 
             """Plot model weights
             """
@@ -53,7 +49,7 @@ class run_experiment:
             #     ['bn1.weight', 'bn2.weight'],
             #     ['bn1.bias', 'bn2.bias'],
             #     )
-            # # noisy model weights
+
             # plot_weights = PlotWeights(job, noise_subdir='noise_additive_conv')
             # plot_weights.plot_all(
             #     ['conv', 'fc.weight', 'shortcut.0.weight'],
@@ -63,12 +59,18 @@ class run_experiment:
 
             """Plot auc, diff, and forgetting ranks
             """
-            # gen_metrics = GenerateMetrics(job, force_generate=False)
-            # train_metrics, metrics_by_epoch = gen_metrics.gen_train_metrics_by_epoch()
-            # noise_metrics = gen_metrics.gen_noise_metrics(
-            #                 job.hparams['noise type'], ['conv'])
-            # gen_metrics.gen_train_to_noise_metrics(train_metrics, metrics_by_epoch, noise_metrics)
-            # noise_metrics = gen_metrics.gen_noise_metrics(
-            #                 job.hparams['noise type'], [])
+            gen = GenerateMetrics(job, noise_exp.noise_scales)
+            plotter = PlotMetrics(job, subdir="plot-metrics-noise")
+            plotter.plot_class_counts("labels", gen.labels)  # check label distribution
+
+            train_metrics = gen.gen_train_metrics()
+            noise_metrics = gen.gen_noise_metrics(noise_exp.subdir)
+            # summarize noise_metrics over S to get R x N (same as train_metrics)
+            noise_metrics = noise_plots.plot_noise_metrics_by_sample(
+                plotter, noise_metrics
+            )
+            metrics = {**train_metrics, **noise_metrics}
+            plotter.plot_metric_rank_qq(metrics)
+            noise_plots.plot_comparisons(plotter, metrics)
 
         print(f"Jobs finished at t={datetime.datetime.now()}")
