@@ -18,7 +18,7 @@ class NoisePerturbation:
         return f'logits_noise_{self.noise_type}_{"-".join(self.name_contains)}'
 
     @property
-    def noise_scales(self):
+    def scales(self):
         # always start from 0 to see if example was learned in trained model
         return np.linspace(
             0.0,
@@ -117,10 +117,8 @@ class NoisePerturbation:
             combine_fn = apply_multiplicative_noise
         else:
             raise ValueError(f"config value 'noise type'={noise_type} is undefined")
-        # linear scaling
-        scales = self.noise_scales
         # interpolate noise with model
-        for scale in scales:
+        for scale in self.scales:
             noisy_model = self.apply_noise(model_state, noise_state, scale, combine_fn)
             yield noisy_model, scale
 

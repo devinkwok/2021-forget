@@ -7,7 +7,7 @@ from forget.postprocess.plot_metrics import PlotMetrics
 
 
 class GenerateMetrics:
-    def __init__(self, job, noise_scale, force_generate=False):
+    def __init__(self, job, force_generate=False):
         # filter batch by train/test examples
         self.job = job
         self.force_generate = force_generate
@@ -25,9 +25,6 @@ class GenerateMetrics:
             [self.iter_mask[1:], self.iter_mask[:1]], axis=0
         )
         self.split_point = int(self.job.hparams["eval number of train examples"])
-        # labels for noise scale, need I+1 items
-        last_scale_item = [noise_scale[-1] + noise_scale[1]]
-        self.scale = np.concatenate([noise_scale, last_scale_item])
         self.early_late_split = int(
             self.job.hparams["plot early late epoch split point"]
         )
@@ -63,6 +60,16 @@ class GenerateMetrics:
             collate, subdir, filename, overwrite=self.force_generate, to_cpu=True
         )
 
+    # wrappers for transformations to fill in some args
+    def batch_forgetting(
+        self, output_prob_by_iter
+    ):  # as implemented by Toneva, same as Nikhil'ss
+        return forgetting_events(output_prob_by_iter, iter_mask=self.iter_mask)
+
+    # wrapper
+    def sgn_prob(self, x):
+        return signed_prob(softmax(x), self.labels)
+
     # source_iterable over logits by epoch
     def replicate_by_epoch(self, model_dir, prefix="eval_logits"):  # source_iter
         # logits are saved after epochs, hence index from 1
@@ -76,34 +83,6 @@ class GenerateMetrics:
                 )
 
             yield load_epoch
-
-    # source_iterable over noise logits by noise sample
-    def noise_by_sample(self, noise_dir, replicate_name):  # source_iter
-        for i in range(int(self.job.hparams["num noise samples"])):
-            file = f"logits-{replicate_name}-noise{i}.pt"
-
-            def load_noise_sample():
-                outputs = torch.load(
-                    os.path.join(self.job.save_path, noise_dir, file),
-                    map_location=torch.device("cpu"),
-                )
-                return outputs["logit"]
-
-            yield load_noise_sample
-
-    # wrappers for transformations to fill in some args
-    def batch_forgetting(
-        self, output_prob_by_iter
-    ):  # as implemented by Toneva, same as Nikhil'ss
-        return forgetting_events(output_prob_by_iter, iter_mask=self.iter_mask)
-
-    # wrapper
-    def sgn_prob(self, x):
-        return signed_prob(softmax(x), self.labels)
-
-    # wrapper
-    def first_forget(self, x):
-        return first_forget(x, self.scale)
 
     def gen_train_metrics(self):
         # R is replicates, E is epochs, I iters, N examples, C classes
@@ -148,9 +127,29 @@ class GenerateMetrics:
         plotter.plot_curves_by_rank(
             s_prob, metrics
         )  # check sgn_prob curves at highest/lowest metric
-        return metrics
+        return metrics, n_epoch, n_iter
 
-    def gen_noise_metrics(self, noise_dir):
+    # source_iterable over noise logits by noise sample
+    def noise_by_sample(self, noise_dir, replicate_name):  # source_iter
+        for i in range(int(self.job.hparams["num noise samples"])):
+            file = f"logits-{replicate_name}-noise{i}.pt"
+
+            def load_noise_sample():
+                outputs = torch.load(
+                    os.path.join(self.job.save_path, noise_dir, file),
+                    map_location=torch.device("cpu"),
+                )
+                return outputs["logit"]
+
+            yield load_noise_sample
+
+    def gen_noise_metrics(self, noise_dir, noise_scale):
+        # labels for noise scale, need I+1 items
+        last_scale_item = [noise_scale[-1] + noise_scale[1]]
+        noise_scale = np.concatenate([noise_scale, last_scale_item])
+        # wrapper
+        def noise_first_forget(x):
+            return first_forget(x, noise_scale)
         # R is replicates, S is noise samples, I iters, N examples, C classes
         print("Loading signed probabilities...")
         # iterate over R, collate over S to get R * (S x I x N)
@@ -168,9 +167,51 @@ class GenerateMetrics:
         # summarizes over I for (R x S x N)
         metrics = {
             "noise_first_forget": self.transform(
-                s_prob, self.first_forget, prefix="noise"
+                s_prob, noise_first_forget, prefix="noise"
             ),
             "noise_mean_prob": self.transform(s_prob, mean_prob, prefix="noise"),
+        }
+        plotter = PlotMetrics(self.job)  # plots for manual validation
+        plotter.plot_curves_by_rank(
+            s_prob, metrics
+        )  # check sgn_prob curves at highest/lowest metric
+        return metrics
+
+    # source_iterable over pruning logits by replicate
+    def pruned_logits(self, prune_dir):  # source_iter
+        for i in range(0, self.job.n_replicates):
+            file = f"logits-model{i}.pt"
+
+            def load_pruned():
+                return torch.load(
+                    os.path.join(self.job.save_path, prune_dir, file),
+                    map_location=torch.device("cpu"),
+                )['logit']
+
+            yield load_pruned
+
+    def gen_prune_metrics(self, prune_dir, prune_scale):
+        # labels for noise scale, need I+1 items
+        last_scale_item = [prune_scale[-1] + prune_scale[1]]
+        prune_scale = np.concatenate([prune_scale, last_scale_item])
+        # wrapper
+        def prune_first_forget(x):
+            return first_forget(x, prune_scale)
+        # R is replicates, I iters, N examples
+        print("Loading signed probabilities...")
+        # collate over R to get (R x I x N)
+        s_prob = self.transform_collate(self.pruned_logits(prune_dir),
+                self.sgn_prob,
+                prefix=prune_dir,
+                subdir=prune_dir
+            )
+        print("Loading metrics...")
+        # summarizes over I for (R x N)
+        metrics = {
+            "prune_first_forget": self.transform(
+                s_prob, prune_first_forget, prefix="prune"
+            ),
+            "prune_mean_prob": self.transform(s_prob, mean_prob, prefix="prune"),
         }
         plotter = PlotMetrics(self.job)  # plots for manual validation
         plotter.plot_curves_by_rank(

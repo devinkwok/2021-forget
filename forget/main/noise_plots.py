@@ -1,4 +1,5 @@
 import numpy as np
+from forget.postprocess.transforms import stats_str
 
 
 def rank(metric):
@@ -145,3 +146,38 @@ def plot_comparisons(plotter, metrics):
 
     plotter.plot_array(plotter.plt_scatter, "noise_std_to_std", stdR, stdR)
     plotter.plot_array(plotter.plt_pair_corr, "noise_std_to_std", stdR, stdR)
+
+def plots_2021_11_24(plotter, all_metrics, learned_before_iter_inclusive, always_learned):
+    metrics = {
+        'first_learn': all_metrics['first_learn'],
+        'noise_first_forget': all_metrics['noise_first_forget'],
+        'prune_first_forget': all_metrics['prune_first_forget'],
+    }
+    medianR = apply(
+        metrics, lambda metric: np.median(metric, axis=-2, keepdims=True), suffix="med"
+    )
+    metrics = mask_learned(metrics, learned_before_iter_inclusive, always_learned)
+    if always_learned:
+        plot_prefix = 'allmaskto' + str(learned_before_iter_inclusive) + '_'
+    else:
+        plot_prefix = 'anymaskto' + str(learned_before_iter_inclusive) + '_'
+    plotter.plot_array(plotter.plt_scatter, plot_prefix + 'id_to_id', metrics, metrics)
+    #FIXME not broadcasting
+    # plotter.plot_array(plotter.plt_scatter, 'id_to_med', metrics, medianR)
+    # plotter.plot_array(plotter.plt_scatter, 'med_to_med', medianR, medianR)
+    plotter.plot_array(plotter.plt_self_corr, plot_prefix + "id_to_id", metrics, metrics)
+    plotter.plot_array(plotter.plt_pair_corr, plot_prefix + "id_to_id", metrics, metrics)
+
+def mask_learned(metrics, learned_before_iter_inclusive=-1, always_learned=False):
+    if learned_before_iter_inclusive < 0:
+        return metrics
+    mask = metrics['first_learn'] <= learned_before_iter_inclusive
+    if always_learned:
+        mask = np.all(mask, axis=-2)
+    else:
+        mask = np.any(mask, axis=-2)
+    print('Include examples learned before iter',
+        learned_before_iter_inclusive, stats_str(mask),
+        'out of', stats_str(metrics['first_learn']))
+    return apply(metrics, lambda metric: metric[..., mask],
+                suffix=f'lrn={learned_before_iter_inclusive}')
