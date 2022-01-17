@@ -1,8 +1,10 @@
 import os
 import types
 import datetime
+from math import ceil
 from pathlib import Path
 import torch
+import numpy as np
 import matplotlib
 from torchvision import datasets
 from torchvision import transforms
@@ -15,6 +17,10 @@ class Job:
         self.hparams = hparams
         self.data_dir = data_dir
         self.save_path = os.path.join(exp_path, name)
+        self.batch_size = int(self.hparams["batch size"])
+        self.n_iter_per_epoch = ceil(len(self.get_train_dataset()) / self.batch_size)
+        self.n_train_examples = len(self.get_train_dataset())
+        self.n_eval_examples = len(self.get_eval_dataset())
         for subdir, _ in self.replicates():
             Path(subdir).mkdir(parents=True, exist_ok=True)
 
@@ -31,26 +37,35 @@ class Job:
             name = f"model{i}"
             yield os.path.join(self.save_path, name), name
 
-    def cached(self, gen_fn, subdir, filename, overwrite=False, to_cpu=False):
+    def cached(
+        self, gen_fn, subdir, filename, overwrite=False, to_cpu=False, use_numpy=False
+    ):
         dir = os.path.join(self.save_path, subdir)
         file = os.path.join(dir, filename)
+        if use_numpy:
+            file = file + ".npy"
         if not os.path.exists(file) or overwrite:
             print(f"Generating {subdir}/{filename} with {gen_fn.__name__}")
             obj = gen_fn()
-            self.save_obj_to_subdir(obj, subdir, filename)
+            self.save_obj_to_subdir(obj, subdir, filename, use_numpy=use_numpy)
             del obj
         print(f"\tloading {subdir}/{filename}")
-        if to_cpu:
+        if use_numpy:
+            return np.load(file)
+        elif to_cpu:
             return torch.load(file, map_location=torch.device("cpu"))
-        return torch.load(file)
+        else:
+            return torch.load(file)
 
-    def save_obj_to_subdir(self, obj, subdir, filename):
+    def save_obj_to_subdir(self, obj, subdir, filename, use_numpy=False):
         dir = os.path.join(self.save_path, subdir)
         file = os.path.join(dir, filename)
         Path(dir).mkdir(parents=True, exist_ok=True)
         if type(obj) == types.ModuleType and obj == matplotlib.pyplot:
             obj.savefig(file)
             obj.close("all")
+        elif use_numpy:
+            np.save(file, obj, allow_pickle=False)
         else:
             torch.save(obj, file)
         print(f"Saved {filename} to {subdir}, t={datetime.datetime.now()}")
@@ -61,7 +76,7 @@ class Job:
         from open_lth.models import registry
 
         model_type = self.hparams["model parameters"]
-        if model_type == "default":
+        if model_type == "default" or model_type == "resnet20":
             _model_params = hparams.ModelHparams(
                 "cifar_resnet_20", "kaiming_uniform", "uniform"
             )
@@ -93,15 +108,6 @@ class Job:
         if start == 0 and end <= 0:
             return dataset
         return torch.utils.data.Subset(dataset, torch.arange(start, end))
-
-    def get_dataloader(self, train=True):
-        if train:
-            dataset = self.get_train_dataset()
-            batch_size = int(self.hparams["batch size"])
-        else:
-            dataset = self.get_eval_dataset()
-            batch_size = int(self.hparams["eval batch size"])
-        return DataLoader(dataset, batch_size=batch_size, num_workers=0)
 
     def get_train_dataset(self):
         return self._get_dataset(train=True)
@@ -142,8 +148,9 @@ class Job:
 
 
 def evaluate_one_batch(model, examples, labels):
-    n_examples = labels.shape[0]
     with torch.no_grad():
         output = model(examples).detach()
-        accuracy = torch.sum(torch.argmax(output, dim=1) == labels).float() / n_examples
+        accuracy = (
+            torch.sum(torch.argmax(output, dim=1) == labels).float() / labels.shape[0]
+        )
     return output, accuracy.item()

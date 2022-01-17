@@ -1,6 +1,8 @@
 import time
+from collections import defaultdict
 import torch
 from torch import nn, optim
+from torch.utils.data import Subset, DataLoader
 from forget.training import measureforget
 
 
@@ -10,117 +12,115 @@ class train:
         self.job = job
         self.replicate_num = replicate_num
         self.model_dir = f"model{self.replicate_num}"
-        self.batch_size = int(
-            self.job.hparams["batch size"]
-        )  # note that this also gets passed to measureForget
         self.loss = nn.CrossEntropyLoss()
-        self.dataloader = self.job.get_dataloader(train=True)
+        self.data = self.job.get_train_dataset()
         # metrics: load eval dataset to CUDA
         examples, _ = zip(*self.job.get_eval_dataset())
         self.eval_x = torch.stack(examples, dim=0).cuda()
 
-        self.forget_msrmt = measureforget.measureForget(
-            self.job.n_epochs,
-            num_batches=len(self.dataloader),
-            batch_size=self.batch_size,
-        )
+    def example_orders(self):
+        def randperm():
+            return torch.randperm(self.job.n_train_examples)
+
+        for i in range(self.job.n_epochs):
+            if self.job.hparams["example order"] == "random":
+                yield self.job.cached(
+                    randperm, "rand_example_order", f"example_idx_epoch={i+1}.pt"
+                )
+            else:
+                yield torch.arange(self.job.n_train_examples)
+
+    def get_dataloader(self, train_data, order):
+        shuffled_data = Subset(train_data, order)
+        return DataLoader(shuffled_data, batch_size=self.job.batch_size, num_workers=1)
 
     def trainLoop(self):
-        ckpt = None
+        def train_epoch():  # name function so that job.cached() prints name
+            return self.train_epoch(None, None, 0)
+
+        ckpt = self.job.cached(train_epoch, self.model_dir, f"epoch={0}.pt")
         # epoch 0 is to save checkpoint at initialization
-        for epoch in range(0, self.job.n_epochs + 1):
+        for i, order in enumerate(self.example_orders()):
+            epoch = i + 1
+            dataloader = self.get_dataloader(self.data, order)
+            # redefine function with previous ckpt as input
+            def train_epoch():
+                return self.train_epoch(ckpt, dataloader, epoch)
 
-            def train_epoch():  # name function so that job.cached() prints name
-                return self.train_epoch(ckpt, epoch)
-
+            # update with next ckpt
             ckpt = self.job.cached(train_epoch, self.model_dir, f"epoch={epoch}.pt")
 
-        self.job.cached(
-            lambda: self.forget_msrmt.forgetStatistics,
-            self.model_dir,
-            f"forgetstatsepoch={epoch}.pt",
-        )
-        self.job.cached(
-            lambda: self.forget_msrmt.correctStatistics,
-            self.model_dir,
-            f"correctstatsepoch={epoch}.pt",
-        )
-        self.forget_msrmt.resetTrainIter()
-
-    def train_epoch(self, ckpt, epoch):
-        if ckpt is None:  # initialize model and return ckpt
-            model, optimizer = self.get_model_optim()
-            return self.checkpoint(
-                model,
-                optimizer,
-                0.0,
-                0.0,
-            )
-
-        # else train ckpt for 1 epoch
-        model, optimizer = self.get_model_optim(
-            ckpt["model_state_dict"], ckpt["optimizer_state_dict"]
-        )
+    def train_epoch(self, ckpt, dataloader, epoch):
+        model, optimizer, scheduler = self.get_model_optim(ckpt, epoch)
         batch_loss, batch_acc, eval_logits = [], [], []
-        for iter, batch in enumerate(self.dataloader):
-            t_0 = time.perf_counter()
-            # metrics: output logits for all examples in eval dataset
-            # do this before training to match Toneva
+        if (
+            dataloader is None
+        ):  # if no data, initialize model, run eval, and return ckpt
             model.eval()
             eval_logits.append(model(self.eval_x).detach().cpu())
-            model.train()
-
-            t_1 = time.perf_counter()
-            x, y = batch
-            logits = model(x.cuda())
-            self.forget_msrmt.trackForgettableExamples(logits.detach(), y.detach())
-
-            J = self.loss(logits, y.cuda())
-            model.zero_grad()
-            J.backward()
-            optimizer.step()
-
-            loss = J.item()
-            acc = y.eq(logits.detach().argmax(dim=1).cpu()).float().mean()
-            batch_loss.append(loss)
-            batch_acc.append(acc)
-            t_2 = time.perf_counter()
-            self.forget_msrmt.incrementTrainBatch()
-            print(
-                f"\t{epoch}:{iter}\ta={acc:0.2f} l={loss:0.4f} ttime={t_2 - t_1:0.4f} mtime={t_1 - t_0:0.4f}"
-            )
-
-        # metrics: save per-iteration probabilities
+        else:  # otherwise, train ckpt for 1 epoch on dataloader
+            for iter, batch in enumerate(dataloader):
+                t_1 = time.perf_counter()
+                # forward pass
+                x, y = batch
+                model.train()
+                logits = model(x.cuda())
+                # backward pass
+                J = self.loss(logits, y.cuda())
+                model.zero_grad()
+                J.backward()
+                optimizer.step()
+                # eval on test data
+                model.eval()
+                eval_logits.append(model(self.eval_x).detach().cpu())
+                # stats
+                batch_loss.append(J.item())
+                batch_acc.append(
+                    y.eq(logits.detach().argmax(dim=1).cpu()).float().mean()
+                )
+                print(
+                    f"\t{epoch}:{iter}\ta={batch_acc[-1]:0.2f} l={batch_loss[-1]:0.4f} t={time.perf_counter() - t_1:0.4f}"
+                )
+        # save per-iteration probabilities
         self.job.save_obj_to_subdir(
             torch.stack(eval_logits, axis=0), self.model_dir, f"eval_logits={epoch}.pt"
         )
-        # WARNING: forget_msrmt is legacy code, will not work correctly if training from epoch > 0
-        self.forget_msrmt.resetTrainBatchTracker()
-        for logits_prime, y in self.evaluate_model(model, self.dataloader):
-            self.forget_msrmt.trackCorrectExamples(logits_prime, y)
-            self.forget_msrmt.incrementClassifyBatch()
-        self.forget_msrmt.resetClassifyBatchTracker()
-        self.forget_msrmt.incrementTrainIter()
+        # return ckpt
+        return self.checkpoint(model, optimizer, scheduler, batch_loss, batch_acc)
 
-        return self.checkpoint(
-            model,
-            optimizer,
-            torch.tensor(batch_loss).mean().item(),
-            torch.tensor(batch_acc).mean().item(),
-        )
+    def get_model_optim(self, ckpt: dict, epoch=0):
+        if ckpt is None:
+            model = self.job.get_model()
+        else:
+            assert "model_state_dict" in ckpt
+            model = self.job.get_model(state_dict=ckpt["model_state_dict"])
 
-    def get_model_optim(self, model_state_dict=None, optim_state_dict=None):
-        model = self.job.get_model(state_dict=model_state_dict)
         if self.job.hparams["model parameters"] == "default":
             optimizer = optim.SGD(model.parameters(), lr=1e-3, momentum=0.9)
-        if optim_state_dict is not None:
-            optimizer.load_state_dict(optim_state_dict)
-        return model, optimizer
+            scheduler = optim.lr_scheduler.MultiStepLR(
+                optimizer, [], last_epoch=-1
+            )  # equivalent to fixed lr
+        elif self.job.hparams["model parameters"] == "resnet20":
+            # hparams for resnet20/cifar10 from Frankle et al. Linear Mode Connectivity and the Lottery Ticket Hypothesis
+            optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
+            # schedule lr drop at 32k and 48k iters
+            scheduler = optim.lr_scheduler.MultiStepLR(optimizer, [82, 123], 0.1)
+        else:
+            raise ValueError(
+                "Invalid model parameters", self.job.hparams["model parameters"]
+            )
 
-    def checkpoint(self, model, optimizer, loss, accuracy):
+        if ckpt is not None:
+            assert "optimizer_state_dict" in ckpt and "scheduler_state_dict" in ckpt
+            optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+            scheduler.load_state_dict(ckpt["scheduler_state_dict"])
+        return model, optimizer, scheduler
+
+    def checkpoint(self, model, optimizer, scheduler, loss, accuracy):
         return {
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
             "loss": loss,
             "train accuracy": accuracy,
         }

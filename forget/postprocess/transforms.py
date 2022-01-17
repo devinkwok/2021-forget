@@ -300,3 +300,44 @@ def stats_str(array):
     return "<{:0.4f}|{:0.4f}|{:0.4f}> {}".format(
         np.min(array), np.mean(array), np.max(array), array.shape
     )
+
+
+def intersection_over_union(set_1: np.ndarray, set_2: np.ndarray) -> float:
+    """Computes jaccard index (intersection over union) of two bool masks of broadcastable dimensions.
+
+    Args:
+        set_1 (np.ndarray): bool mask
+        set_2 (np.ndarray): bool mask
+
+    Returns:
+        float: sum(set_1 AND set_2) / sum(set_1 OR set_2)
+    """
+    return np.sum(np.logical_and(set_1, set_2)) / np.sum(np.logical_or(set_1, set_2))
+
+
+def jaccard_similarity(
+    set_1: np.ndarray, set_2: np.ndarray
+) -> typing.Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Computes jaccard index while varying threshold of inclusion from 0 to 100%.
+
+    Args:
+        set_1 ([np.ndarray]): set of values to threshold, dimension (N)
+        set_2 ([np.ndarray]): another set of values to threshold, dimension (N)
+
+    Returns:
+        tuple[np.ndarray, np.ndarray, np.ndarray]: jaccard indexes, thresholds for set_1,
+            and thresholds for set_2, all dimension N
+    """
+    assert (
+        len(set_1.shape) == 1 and len(set_2.shape) == 1 and set_1.shape == set_2.shape
+    )
+    idx_1 = np.argsort(set_1)
+    idx_2 = np.argsort(set_2)
+    mask_1 = np.zeros_like(set_1, dtype=bool)
+    mask_2 = np.zeros_like(set_2, dtype=bool)
+    jaccard = []
+    for i in range(len(set_1)):
+        mask_1[idx_1[i]] = True
+        mask_2[idx_2[i]] = True
+        jaccard += [intersection_over_union(mask_1, mask_2)]
+    return np.array(jaccard), set_1[idx_1], set_2[idx_2]

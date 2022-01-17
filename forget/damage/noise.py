@@ -15,7 +15,7 @@ class NoisePerturbation:
 
     @property
     def subdir(self):
-        return f'logits_noise_{self.noise_type}_{"-".join(self.name_contains)}'
+        return f'logits_noise_{self.noise_type}_{"-".join(self.name_contains)}-ep{self.job.n_epochs}'
 
     @property
     def scales(self):
@@ -46,7 +46,7 @@ class NoisePerturbation:
 
             yield self.job.cached(gen_noise, "noise_" + self.noise_dist, f"noise{i}.pt")
 
-    def noise_logits(self):
+    def gen_noise_logits(self):
         # load dataset to CUDA
         examples, labels = zip(*self.job.get_eval_dataset())
         examples = torch.stack(examples, dim=0).cuda()
@@ -55,7 +55,7 @@ class NoisePerturbation:
         # load trained models and sample noise
         model_states = [
             ckpt["model_state_dict"]
-            for ckpt, _ in self.job.load_checkpoints_by_epoch(-1)
+            for ckpt, _ in self.job.load_checkpoints_by_epoch(self.job.n_epochs)
         ]
         noise_states = [ckpt["model_state_dict"] for ckpt in self.noise_samples()]
         # cross product over samples x replicates

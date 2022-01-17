@@ -2,19 +2,25 @@ import numpy as np
 from scipy.stats import spearmanr
 import matplotlib.pyplot as plt
 
+from forget.postprocess.transforms import jaccard_similarity
+
 
 class PlotMetrics:
-    def __init__(self, job, subdir="plot-metrics"):
+    def __init__(self, job, subdir):
         self.job = job
         self.subdir = subdir
+        n_train = int(self.job.hparams["eval number of train examples"])
+        n_test = int(self.job.hparams["eval number of test examples"])
+        self.colors = np.concatenate([np.zeros(n_train), np.ones(n_test)], axis=0)
+        self.cmap = plt.cm.viridis
 
     def _color(self, i, n):
-        return plt.cm.viridis(i / n)
+        return self.cmap(i / n)
 
     def plot_class_counts(self, name, labels):
         values, counts = np.unique(labels, return_counts=True)
         plt.bar(values, counts)
-        self.job.save_obj_to_subdir(plt, "plot-metrics", f"counts_{name}")
+        self.job.save_obj_to_subdir(plt, self.subdir, f"counts_{name}")
 
     def plot_curves(self, name, groups, ylim=None):
         # groups is (G x L x I)
@@ -31,7 +37,7 @@ class PlotMetrics:
             color = self._color(i, len(groups))
             for line in lines:
                 plt.plot(line, linewidth=1.0, color=color, alpha=0.2)
-        self.job.save_obj_to_subdir(plt, "plot-metrics", f"curve_{name}")
+        self.job.save_obj_to_subdir(plt, self.subdir, f"curve_{name}")
 
     def plot_curves_by_rank(self, scores, dict_metrics, n_rank=1, n_rep=3):
         # for each metric, plot the largest and smallest ranking example
@@ -73,33 +79,79 @@ class PlotMetrics:
         jitter = np.random.normal(1, 0.05, len(correlations))
         plt_obj.plot(jitter, correlations, ".", alpha=0.4)
 
-    def _plt_corr(self, plt_obj, row_metric, col_metric, on_adjacent_pairs):
+    def _plt_corr(self, plt_obj, row_metric, col_metric, on_adjacent_pairs, mask):
         # broadcast to make sure both metrics have same sized R
         m1, m2 = np.broadcast_arrays(row_metric, col_metric)
+        if mask is None:
+            mask = np.ones_like(m1, dtype=bool)
         assert len(m1.shape) == 2 and len(m2.shape) == 2
         if on_adjacent_pairs:
             m1 = m1[:-1, ...]
             m2 = m2[1:, ...]
-        correlations = [
-            spearmanr(a, b)[0] for a, b in zip(m1, m2)  # iterate over first dim R
-        ]
+        correlations = []
+        for a, b, m in zip(m1, m2, mask):  # iterate over first dim R
+            correlations.append(spearmanr(a[m], b[m])[0])
         correlations = np.square(np.array(correlations))
         self.boxplot_corr(plt_obj, correlations)
 
-    def plt_self_corr(self, plt_obj, row_metric, col_metric):
-        self._plt_corr(plt_obj, row_metric, col_metric, True)
+    def plt_self_corr(self, plt_obj, row_metric, col_metric, mask):
+        self._plt_corr(plt_obj, row_metric, col_metric, True, mask)
 
-    def plt_pair_corr(self, plt_obj, row_metric, col_metric):
-        self._plt_corr(plt_obj, row_metric, col_metric, False)
+    def plt_pair_corr(self, plt_obj, row_metric, col_metric, mask):
+        self._plt_corr(plt_obj, row_metric, col_metric, False, mask)
 
-    def plt_scatter(self, plt_obj, row_metric, col_metric):
+    def plt_scatter(self, plt_obj, row_metric, col_metric, mask):
+        x_data, y_data, colors = np.broadcast_arrays(
+            col_metric, row_metric, self.colors
+        )
+        if mask is None:
+            mask = np.ones_like(x_data, dtype=bool)
+        for i, (a, b, m, c) in enumerate(zip(x_data, y_data, mask, colors)):
+            plt_obj.scatter(
+                a[m], b[m], c=c[m], marker=".", s=4, alpha=0.05, cmap=self.cmap
+            )
+            # plt_obj.scatter(a[m], b[m], c=self._color(i, len(x_data)), marker=".", s=4, alpha=0.05, cmap=self.cmap)
+
+    def plt_jaccard_curve(self, plt_obj, row_metric, col_metric, mask):
         x_data, y_data = np.broadcast_arrays(col_metric, row_metric)
-        plt_obj.scatter(x_data.flatten(), y_data.flatten(), marker=".", s=4, alpha=0.02)
+        if mask is None:
+            mask = np.ones_like(x_data, dtype=bool)
+        for i, (a, b, m) in enumerate(zip(x_data, y_data, mask)):
+            x = np.linspace(0, 1.0, len(a[m]))  # normalize x axis from 0 to 100%
+            # plot experimental baseline
+            rand_y, rand_1, rand_2 = jaccard_similarity(
+                np.random.permutation(a[m]), np.random.permutation(a[m])
+            )
+            plt_obj.plot(
+                x, rand_y, color="black", linewidth=1.0, linestyle="dotted", alpha=0.4
+            )
+            # plot theoretical baseline
+            plt_obj.plot(
+                x,
+                x / (2 - x),
+                color="red",
+                linewidth=1.0,
+                linestyle="dotted",
+                alpha=0.4,
+            )
+            # plot actual curve
+            y, x_1, x_2 = jaccard_similarity(a[m], b[m])
+            plt_obj.plot(
+                x, y, color=self._color(i, len(x_data)), linewidth=1.0, alpha=0.4
+            )
 
-    def plot_array(self, plt_fn, suffix, dict_metrics_row, dict_metrics_col):
+    def plt_hist(self, plt_obj, row_metric, col_metric, mask):  # don't use row_metric
+        if mask is None:
+            mask = np.ones_like(col_metric, dtype=bool)
+        dist = col_metric[mask]
+        plt_obj.hist(
+            dist, bins="rice", density=False, range=(np.min(dist), np.max(dist))
+        )
+
+    def plot_array(self, plt_fn, suffix, dict_metrics_row, dict_metrics_col, mask=None):
         # take dict of {name: metric}, plot every combination of mean(metricA) to metricB
         # scatter plot for every combination of dict_metrics_row, dict_metrics_col
-        rows, cols = len(dict_metrics_row), len(dict_metrics_col)
+        rows, cols = max(len(dict_metrics_row), 2), max(len(dict_metrics_col), 2)
         fig, axes = plt.subplots(rows, cols, figsize=(3 * cols, 3 * rows))
         for i, (name_row, row) in enumerate(zip(dict_metrics_row.keys(), axes)):
             for j, (name_col, ax) in enumerate(zip(dict_metrics_col.keys(), row)):
@@ -107,5 +159,5 @@ class PlotMetrics:
                     ax.set_title(name_col)
                 if j == 0:
                     ax.set_ylabel(name_row)
-                plt_fn(ax, dict_metrics_row[name_row], dict_metrics_col[name_col])
-        self.job.save_obj_to_subdir(plt, "plot-metrics", f"{plt_fn.__name__}-{suffix}")
+                plt_fn(ax, dict_metrics_row[name_row], dict_metrics_col[name_col], mask)
+        self.job.save_obj_to_subdir(plt, self.subdir, f"{plt_fn.__name__}-{suffix}")

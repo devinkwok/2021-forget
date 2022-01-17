@@ -6,12 +6,12 @@ from forget.job import evaluate_one_batch
 
 class PrunePerturbation:
     def __init__(self, job):
-        self.prune_type = 'prune_magnitude'
+        self.prune_type = "prune_magnitude"
         self.job = job
 
     @property
     def subdir(self):
-        return f'logits_{self.prune_type}'
+        return f"logits_{self.prune_type}-ep{self.job.n_epochs}"
 
     @property
     def scales(self):
@@ -22,14 +22,14 @@ class PrunePerturbation:
             int(self.job.hparams["prune num points"]),
         )
 
-    def prune_logits(self):
+    def gen_prune_logits(self):
         # load dataset to CUDA
         examples, labels = zip(*self.job.get_eval_dataset())
         examples = torch.stack(examples, dim=0).cuda()
         labels = torch.tensor(labels).cuda()
 
         # load trained models and sample noise
-        for i, (ckpt, _) in enumerate(self.job.load_checkpoints_by_epoch(-1)):
+        for ckpt, name in self.job.load_checkpoints_by_epoch(self.job.n_epochs):
             model = self.job.get_model(state_dict=ckpt["model_state_dict"])
             logits, accuracies = [], []
 
@@ -52,7 +52,8 @@ class PrunePerturbation:
                     "accuracy": accuracies,
                 }
 
-            self.job.cached(prune_logit, self.subdir, f"logits-model{i}.pt")
+            self.job.cached(prune_logit, self.subdir, f"logits-{name}.pt")
+
 
 # from open_lth, copied to avoid import issues
 def prunable_layer_names(model):
@@ -61,14 +62,20 @@ def prunable_layer_names(model):
     By default, only the weights of convolutional and linear layers are prunable.
     """
 
-    return [name + '.weight' for name, module in model.named_modules() if
-            isinstance(module, torch.nn.modules.conv.Conv2d) or
-            isinstance(module, torch.nn.modules.linear.Linear)]
+    return [
+        name + ".weight"
+        for name, module in model.named_modules()
+        if isinstance(module, torch.nn.modules.conv.Conv2d)
+        or isinstance(module, torch.nn.modules.linear.Linear)
+    ]
+
 
 # from open_lth, copied to avoid import issues
 def prune_mask(model, fraction, current_mask=None):
-    empty_mask = {name: np.ones(list(model.state_dict()[name].shape))
-        for name in prunable_layer_names(model)}
+    empty_mask = {
+        name: np.ones(list(model.state_dict()[name].shape))
+        for name in prunable_layer_names(model)
+    }
     if current_mask is None:
         current_mask = empty_mask
 
@@ -77,24 +84,31 @@ def prune_mask(model, fraction, current_mask=None):
     number_of_original_weights = np.sum([np.sum(v) for v in empty_mask.values()])
     number_of_remaining_weights = np.sum([np.sum(v) for v in current_mask.values()])
     already_pruned = number_of_original_weights - number_of_remaining_weights
-    number_of_weights_to_prune = np.ceil(
-        fraction * number_of_original_weights).astype(int) - already_pruned.astype(int)
+    number_of_weights_to_prune = np.ceil(fraction * number_of_original_weights).astype(
+        int
+    ) - already_pruned.astype(int)
     assert fraction > 0 and number_of_weights_to_prune > 0 or fraction == 0
 
     # Determine which layers can be pruned.
     prunable_tensors = set(prunable_layer_names(model))
 
     # Get the model weights.
-    weights = {k: v.clone().cpu().detach().numpy()
-                for k, v in model.state_dict().items()
-                if k in prunable_tensors}
+    weights = {
+        k: v.clone().cpu().detach().numpy()
+        for k, v in model.state_dict().items()
+        if k in prunable_tensors
+    }
 
     # Create a vector of all the unpruned weights in the model.
-    weight_vector = np.concatenate([v[current_mask[k] == 1] for k, v in weights.items()])
+    weight_vector = np.concatenate(
+        [v[current_mask[k] == 1] for k, v in weights.items()]
+    )
     threshold = np.sort(np.abs(weight_vector))[number_of_weights_to_prune]
 
-    new_mask = {k: np.where(np.abs(v) > threshold, current_mask[k], np.zeros_like(v))
-                        for k, v in weights.items()}
+    new_mask = {
+        k: np.where(np.abs(v) > threshold, current_mask[k], np.zeros_like(v))
+        for k, v in weights.items()
+    }
     for k in current_mask:
         if k not in new_mask:
             new_mask[k] = current_mask[k]

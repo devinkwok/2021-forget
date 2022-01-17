@@ -7,9 +7,10 @@ from forget.postprocess.plot_metrics import PlotMetrics
 
 
 class GenerateMetrics:
-    def __init__(self, job, force_generate=False):
+    def __init__(self, job, plotter, force_generate=False):
         # filter batch by train/test examples
         self.job = job
+        self.plotter = plotter
         self.force_generate = force_generate
         eval_dataset = self.job.get_eval_dataset()
         self.labels = np.array([y for _, y in eval_dataset])
@@ -35,19 +36,25 @@ class GenerateMetrics:
         print(f"\t{stats_str(output)} t={time.perf_counter() - start_time} {name}")
         return output
 
-    def transform(self, source, transform_fn, prefix="", subdir="metrics"):
+    def transform(self, source, transform_fn, prefix, subdir=None):
+        if subdir is None:
+            subdir = f"metrics-ep{self.job.n_epochs}"
+
         def generate():
             return self._transform(prefix, source, transform_fn)
 
-        filename = f"{prefix}-{transform_fn.__name__}.metric"
+        filename = f"{prefix}.metric"
         return self.job.cached(
             generate, subdir, filename, overwrite=self.force_generate, to_cpu=True
         )
 
     # source_iterable contains functions which, when called, gives object for transform
     def transform_collate(
-        self, source_iterable, transform_fn, prefix="", subdir="metrics"
+        self, source_iterable, transform_fn, prefix, subdir=None, use_numpy=False
     ):
+        if subdir is None:
+            subdir = f"metrics-ep{self.job.n_epochs}"
+
         def collate():
             outputs = [
                 self._transform(str(i), source_fn(), transform_fn)
@@ -55,9 +62,14 @@ class GenerateMetrics:
             ]
             return np.stack(outputs, axis=0)
 
-        filename = f"{prefix}-{transform_fn.__name__}.metric"
+        filename = f"{prefix}.metric"
         return self.job.cached(
-            collate, subdir, filename, overwrite=self.force_generate, to_cpu=True
+            collate,
+            subdir,
+            filename,
+            overwrite=self.force_generate,
+            to_cpu=True,
+            use_numpy=use_numpy,
         )
 
     # wrappers for transformations to fill in some args
@@ -71,7 +83,7 @@ class GenerateMetrics:
         return signed_prob(softmax(x), self.labels)
 
     # source_iterable over logits by epoch
-    def replicate_by_epoch(self, model_dir, prefix="eval_logits"):  # source_iter
+    def train_logit_iter(self, model_dir, prefix="eval_logits"):  # source_iter
         # logits are saved after epochs, hence index from 1
         for i in range(1, self.job.n_epochs + 1):
             file = f"{prefix}={i}.pt"
@@ -79,58 +91,69 @@ class GenerateMetrics:
             def load_epoch():
                 return torch.load(
                     os.path.join(self.job.save_path, model_dir, file),
-                    map_location=torch.device("cpu"),
                 )
 
             yield load_epoch
+
+    def sgn_prob_iter(self, start, end):
+        for path, name in self.job.replicates():
+
+            def load_sgn_prob():
+                s_prob = np.load(  # np.save doesn't have size limit
+                    os.path.join(
+                        path, f"{name}-sgn_prob-ep{self.job.n_epochs}.metric.npy"
+                    ),
+                )
+                # reshape to (1 x EI x N)
+                s_prob = s_prob.reshape(1, -1, self.job.n_eval_examples)
+                assert s_prob.shape[-2] == self.job.n_epochs * self.job.n_iter_per_epoch
+                return s_prob[:, start:end, :]
+
+            yield load_sgn_prob
 
     def gen_train_metrics(self):
         # R is replicates, E is epochs, I iters, N examples, C classes
         print("Loading signed probabilities...")
         # iterate over R, collate over E to get R * (E x I x N)
-        s_prob = [
-            self.transform_collate(
-                self.replicate_by_epoch(subdir),
+        for _, subdir in self.job.replicates():
+            s_prob = self.transform_collate(
+                self.train_logit_iter(subdir),
                 self.sgn_prob,
-                prefix=subdir,
+                prefix=f"{subdir}-sgn_prob-ep{self.job.n_epochs}",
                 subdir=subdir,
-            )
-            for _, subdir in self.job.replicates()
-        ]
-        s_prob = np.stack(s_prob, axis=0)  # stack to (R x E x I x N)
-        n_epoch, n_iter, n_example = (
-            s_prob.shape[-3],
-            s_prob.shape[-2],
-            s_prob.shape[-1],
-        )
-        # merge to (R x EI x N)
-        s_prob = s_prob.reshape(-1, n_epoch * n_iter, n_example)
-        # compute metrics over I to get (R x N)
+                use_numpy=True,
+            )  # overwrite previous s_prob to avoid OOM
+            # this means s_prob is last replicate
+        # compute metrics over EI to get (1 x N), collate over R
         print("Loading metrics...")
-        it_split = self.early_late_split * n_iter
+        it_split = self.early_late_split * self.job.n_iter_per_epoch
+        end = self.job.n_epochs * self.job.n_iter_per_epoch
         metrics = {
-            "early_mean_prob": self.transform(
-                s_prob[:, :it_split, :], mean_prob, prefix="early"
+            "early_mean_prob": self.transform_collate(
+                self.sgn_prob_iter(0, it_split), mean_prob, prefix="early_mean_prob"
             ),
-            "late_mean_prob": self.transform(
-                s_prob[:, it_split:, :], mean_prob, prefix="late"
+            "late_mean_prob": self.transform_collate(
+                self.sgn_prob_iter(it_split, end), mean_prob, prefix="late_mean_prob"
             ),
             # TODO diff_norm uses too much memory
-            # 'diff_norm': self.transform(s_prob, diff_norm, prefix='train'),
-            "forget": self.transform(s_prob, forgetting_events, prefix="train"),
-            "batch_forget": self.transform(
-                s_prob, self.batch_forgetting, prefix="train"
+            # 'diff_norm': self.transform_collate(s_prob, diff_norm, prefix='train'),
+            "forget": self.transform_collate(
+                self.sgn_prob_iter(0, end), forgetting_events, prefix="train_forget"
             ),
-            "first_learn": self.transform(s_prob, first_learn, prefix="train"),
+            # TODO account for randomized example order
+            # "batch_forget": self.transform_collate(
+            #     self.sgn_prob_iter(0, end), self.batch_forgetting, prefix="train_batch_forget"
+            # ),
+            "first_learn": self.transform_collate(
+                self.sgn_prob_iter(0, end), first_learn, prefix="train_first_learn"
+            ),
         }
-        plotter = PlotMetrics(self.job)  # plots for manual validation
-        plotter.plot_curves_by_rank(
+        self.plotter.plot_curves_by_rank(
             s_prob, metrics
-        )  # check sgn_prob curves at highest/lowest metric
-        return metrics, n_epoch, n_iter
+        )  # check sgn_prob curves at highest/lowest metric for 1st replicate
 
     # source_iterable over noise logits by noise sample
-    def noise_by_sample(self, noise_dir, replicate_name):  # source_iter
+    def noise_logit_iter(self, noise_dir, replicate_name):  # source_iter
         for i in range(int(self.job.hparams["num noise samples"])):
             file = f"logits-{replicate_name}-noise{i}.pt"
 
@@ -150,14 +173,15 @@ class GenerateMetrics:
         # wrapper
         def noise_first_forget(x):
             return first_forget(x, noise_scale)
+
         # R is replicates, S is noise samples, I iters, N examples, C classes
         print("Loading signed probabilities...")
         # iterate over R, collate over S to get R * (S x I x N)
         s_prob = [
             self.transform_collate(
-                self.noise_by_sample(noise_dir, model_dir),
+                self.noise_logit_iter(noise_dir, model_dir),
                 self.sgn_prob,
-                prefix=model_dir,
+                prefix=model_dir + "-sgn_prob",
                 subdir=noise_dir,
             )
             for _, model_dir in self.job.replicates()
@@ -167,26 +191,26 @@ class GenerateMetrics:
         # summarizes over I for (R x S x N)
         metrics = {
             "noise_first_forget": self.transform(
-                s_prob, noise_first_forget, prefix="noise"
+                s_prob, noise_first_forget, prefix="noise_first_forget"
             ),
-            "noise_mean_prob": self.transform(s_prob, mean_prob, prefix="noise"),
+            "noise_mean_prob": self.transform(
+                s_prob, mean_prob, prefix="noise_mean_prob"
+            ),
         }
-        plotter = PlotMetrics(self.job)  # plots for manual validation
-        plotter.plot_curves_by_rank(
+        self.plotter.plot_curves_by_rank(
             s_prob, metrics
         )  # check sgn_prob curves at highest/lowest metric
-        return metrics
 
     # source_iterable over pruning logits by replicate
-    def pruned_logits(self, prune_dir):  # source_iter
-        for i in range(0, self.job.n_replicates):
-            file = f"logits-model{i}.pt"
+    def prune_logit_iter(self, prune_dir):  # source_iter
+        for _, model_dir in self.job.replicates():
+            file = f"logits-{model_dir}.pt"
 
             def load_pruned():
                 return torch.load(
                     os.path.join(self.job.save_path, prune_dir, file),
                     map_location=torch.device("cpu"),
-                )['logit']
+                )["logit"]
 
             yield load_pruned
 
@@ -197,24 +221,26 @@ class GenerateMetrics:
         # wrapper
         def prune_first_forget(x):
             return first_forget(x, prune_scale)
+
         # R is replicates, I iters, N examples
         print("Loading signed probabilities...")
         # collate over R to get (R x I x N)
-        s_prob = self.transform_collate(self.pruned_logits(prune_dir),
-                self.sgn_prob,
-                prefix=prune_dir,
-                subdir=prune_dir
-            )
+        s_prob = self.transform_collate(
+            self.prune_logit_iter(prune_dir),
+            self.sgn_prob,
+            prefix=prune_dir + "-sgn_prob",
+            subdir=prune_dir,
+        )
         print("Loading metrics...")
         # summarizes over I for (R x N)
         metrics = {
             "prune_first_forget": self.transform(
-                s_prob, prune_first_forget, prefix="prune"
+                s_prob, prune_first_forget, prefix="prune_first_forget"
             ),
-            "prune_mean_prob": self.transform(s_prob, mean_prob, prefix="prune"),
+            "prune_mean_prob": self.transform(
+                s_prob, mean_prob, prefix="prune_mean_prob"
+            ),
         }
-        plotter = PlotMetrics(self.job)  # plots for manual validation
-        plotter.plot_curves_by_rank(
+        self.plotter.plot_curves_by_rank(
             s_prob, metrics
         )  # check sgn_prob curves at highest/lowest metric
-        return metrics
