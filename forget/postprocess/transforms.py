@@ -168,7 +168,8 @@ def diff_norm(
 def forgetting_events(
     output_prob_by_iter: np.ndarray,
     iter_mask: np.ndarray = None,
-    never_learned_value=None,
+    never_learned_value: int = None,
+    return_count=True,
 ) -> np.ndarray:
     """Counts number of forgetting events, as defined by Toneva et al., 2018.
     Specifically, an example is forgotten if it is incorrect at time t+1 and
@@ -182,6 +183,14 @@ def forgetting_events(
             between successive time steps which are True in the mask.
             Each example must have the same number of True values over I.
             Defaults to None.
+        never_learned_value (int, optional): If set, any example in dimension N
+            which never has a learning event is set to this count.
+            Alternatively, if return_count is False, create a forgetting event at this
+            iteration in I for examples which are never learned, otherwise,
+            create a forgetting event at the last iteration for examples
+            which are never learned. Defaults to None.
+        return_count (bool): If True, return count over I, otherwise return an array
+            with 0, 1 over dimension I indicating if forgetting occurred. Defaults to True.
 
     Returns:
         np.ndarray: array of $(\dots, N)$ forgetting counts.
@@ -210,12 +219,19 @@ def forgetting_events(
     diff = np.logical_and(
         is_correct[..., :-1, :], np.logical_not(is_correct[..., 1:, :])
     )
-    n_forget = np.sum((diff == 1), axis=-2)  # correct - incorrect is 1 - 0
+    forget_events = diff == 1
+    never_learned = np.logical_not(np.any(is_correct, axis=-2))
+    if not return_count:
+        # add one forget_event to last iter of never learned examples
+        if never_learned_value is None:
+            never_learned_value = -1
+        forget_events[..., never_learned_value, :][never_learned] = True
+        return forget_events
+    n_forget = np.sum(forget_events, axis=-2)  # correct - incorrect is 1 - 0
     # set examples which were never learned to some value
     if never_learned_value is None:
         never_learned_value = np.max(n_forget) + 1
     # never_learned is 0 forgetting AND incorrect at last iter
-    never_learned = np.logical_not(np.any(is_correct, axis=-2))
     n_forget[never_learned] = never_learned_value
     return n_forget
 
@@ -297,8 +313,8 @@ def first_learn(output_prob_by_iter: np.ndarray, scale=None) -> np.ndarray:
 
 def stats_str(array):
     """Helper for pretty printing"""
-    return "<{:0.4f}|{:0.4f}|{:0.4f}> {}".format(
-        np.min(array), np.mean(array), np.max(array), array.shape
+    return "<{:0.4f}|{:0.4f}/{:0.4f}|{:0.4f}> {}".format(
+        np.min(array), np.mean(array), np.std(array), np.max(array), array.shape
     )
 
 
@@ -341,3 +357,21 @@ def jaccard_similarity(
         mask_2[idx_2[i]] = True
         jaccard += [intersection_over_union(mask_1, mask_2)]
     return np.array(jaccard), set_1[idx_1], set_2[idx_2]
+
+
+def center_of_mass(weight: np.ndarray, index: np.ndarray = None, normalize=True):
+    """Computes center of mass of index in array weighted by array values.
+
+    Args:
+        weight (np.ndarray): weight of each index, dimension (..., I \times N)
+        index (np.ndarray, optional): If None, weights are multiplied by the index (1, 2, \dots I).
+            Otherwise weights are multiplied by this array of dimension I. Defaults to None.
+        normalize (bool, optional): If True, divide result by sum of weights. Defaults to True.
+    """
+    if index is None:
+        index = np.arange(weight.shape[-2])
+    assert index.shape == (weight.shape[-2],), index.shape
+    center_of_mass = np.tensordot(weight, index, axes=([-2], [0]))
+    if normalize:
+        center_of_mass = center_of_mass / np.sum(weight, axis=-2)
+    return center_of_mass

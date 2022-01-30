@@ -1,58 +1,21 @@
-import time
 import numpy as np
 import torch
-from forget.job import evaluate_one_batch
+from forget.damage.perturb import Perturbation
 
 
-class PrunePerturbation:
+class PrunePerturbation(Perturbation):
     def __init__(self, job):
-        self.prune_type = "prune_magnitude"
-        self.job = job
+        super().__init__("prune_magn_notrain", job, False)
 
-    @property
-    def subdir(self):
-        return f"logits_{self.prune_type}-ep{self.job.n_epochs}"
+    def apply_perturbation(self, noise, scale, model, examples):
+        mask = prune_mask(model, scale)
+        # copy model to avoid affecting original
+        pruned_model = self.job.get_model(model.state_dict())
+        apply_mask(pruned_model, mask)  # modifies model in place
+        return pruned_model, examples
 
-    @property
-    def scales(self):
-        # always start from 0 to see if example was learned in trained model
-        return np.linspace(
-            0.0,
-            float(self.job.hparams["prune scale max"]),
-            int(self.job.hparams["prune num points"]),
-        )
-
-    def gen_prune_logits(self):
-        # load dataset to CUDA
-        examples, labels = zip(*self.job.get_eval_dataset())
-        examples = torch.stack(examples, dim=0).cuda()
-        labels = torch.tensor(labels).cuda()
-
-        # load trained models and sample noise
-        for ckpt, name in self.job.load_checkpoints_by_epoch(self.job.n_epochs):
-            model = self.job.get_model(state_dict=ckpt["model_state_dict"])
-            logits, accuracies = [], []
-
-            def prune_logit():
-                mask = None
-                for scale in self.scales:
-                    start_time = time.perf_counter()
-                    mask = prune_mask(model, scale, current_mask=mask)
-                    apply_mask(model, mask)  # modifies model in place
-                    output, accuracy = evaluate_one_batch(model, examples, labels)
-                    accuracies.append(accuracy)
-                    logits.append(output)
-                    print(
-                        f"\ts={scale}, a={accuracy}, t={time.perf_counter() - start_time}"
-                    )
-                return {
-                    "type": self.prune_type,
-                    "logit": torch.stack(logits, dim=0),
-                    "scale": self.scales,
-                    "accuracy": accuracies,
-                }
-
-            self.job.cached(prune_logit, self.subdir, f"logits-{name}.pt")
+    def gen_noise_sample(self):
+        return None  # not used
 
 
 # from open_lth, copied to avoid import issues
@@ -71,22 +34,18 @@ def prunable_layer_names(model):
 
 
 # from open_lth, copied to avoid import issues
-def prune_mask(model, fraction, current_mask=None):
-    empty_mask = {
+def prune_mask(model, fraction):
+    current_mask = {
         name: np.ones(list(model.state_dict()[name].shape))
         for name in prunable_layer_names(model)
     }
-    if current_mask is None:
-        current_mask = empty_mask
 
     # Determine the number of weights that need to be pruned.
-    # MODIFICATION: always set fraction relative to original number of weights
-    number_of_original_weights = np.sum([np.sum(v) for v in empty_mask.values()])
-    number_of_remaining_weights = np.sum([np.sum(v) for v in current_mask.values()])
-    already_pruned = number_of_original_weights - number_of_remaining_weights
+    # MODIFICATION: current_mask is always None
+    number_of_original_weights = np.sum([np.sum(v) for v in current_mask.values()])
     number_of_weights_to_prune = np.ceil(fraction * number_of_original_weights).astype(
         int
-    ) - already_pruned.astype(int)
+    )
     assert fraction > 0 and number_of_weights_to_prune > 0 or fraction == 0
 
     # Determine which layers can be pruned.
@@ -114,6 +73,7 @@ def prune_mask(model, fraction, current_mask=None):
             new_mask[k] = current_mask[k]
 
     return new_mask
+
 
 # from open_lth, copied to avoid import issues
 def apply_mask(model, mask):

@@ -47,10 +47,9 @@ class PlotWeights:
 
     def _load_training_epochs(self):
         for epoch in range(self.job.n_epochs + 1):  # 0 is init
-            for ckpt, rep_name in self.job.load_checkpoints_by_epoch(
-                epoch, to_cpu=True
+            for rep, ckpt in enumerate(
+                self.job.load_checkpoints_by_epoch(epoch, to_cpu=True)
             ):
-                rep = int(rep_name[len("model") :])  # convert 'model0' to 0
                 yield rep, epoch, ckpt
 
     def retrieve_layers(self, replicates=[], epochs=[], name_contains=[]):
@@ -59,7 +58,7 @@ class PlotWeights:
             epochs = [epochs]
         if type(replicates) is int:
             replicates = [replicates]
-        if type(name_contains) is str:
+        if isinstance(name_contains, str):
             name_contains = [name_contains]
         if len(epochs) == 0:  # include all
             epochs = self.epochs
@@ -119,7 +118,7 @@ class PlotWeights:
 
     def hist_layers_by_init(self, name_contains=[]):
         last_epoch = self.epochs[-1]  # use last epoch
-        if type(name_contains) is str:
+        if isinstance(name_contains, str):
             name_contains = [name_contains]
         data = [
             self.retrieve_layers(
@@ -130,7 +129,7 @@ class PlotWeights:
         self.plot_histograms(data, "hist_by_init_" + "-".join(name_contains) + ".png")
 
     def hist_layers_by_epoch(self, name_contains=[]):
-        if type(name_contains) is str:
+        if isinstance(name_contains, str):
             name_contains = [name_contains]
         data = [
             self.retrieve_layers(epochs=i, name_contains=name_contains)
@@ -139,7 +138,7 @@ class PlotWeights:
         self.plot_histograms(data, "hist_by_epoch_" + "-".join(name_contains) + ".png")
 
     def hist_layers(self, name_contains=[]):
-        if type(name_contains) is str:
+        if isinstance(name_contains, str):
             name_contains = [name_contains]
         data = [self.retrieve_layers(name_contains=name_contains)]
         self.plot_histograms(data, "hist_layers_" + "-".join(name_contains) + ".png")

@@ -1,17 +1,13 @@
 import time
-from collections import defaultdict
 import torch
 from torch import nn, optim
 from torch.utils.data import Subset, DataLoader
-from forget.training import measureforget
 
 
 class train:
-    def __init__(self, job, replicate_num):
+    def __init__(self, job):
         # structure of directory is eg ../jobs/job1/model1/
         self.job = job
-        self.replicate_num = replicate_num
-        self.model_dir = f"model{self.replicate_num}"
         self.loss = nn.CrossEntropyLoss()
         self.data = self.job.get_train_dataset()
         # metrics: load eval dataset to CUDA
@@ -25,7 +21,7 @@ class train:
         for i in range(self.job.n_epochs):
             if self.job.hparams["example order"] == "random":
                 yield self.job.cached(
-                    randperm, "rand_example_order", f"example_idx_epoch={i+1}.pt"
+                    randperm, "rand_example_order", f"example_idx_ep{i+1}.pt"
                 )
             else:
                 yield torch.arange(self.job.n_train_examples)
@@ -34,23 +30,23 @@ class train:
         shuffled_data = Subset(train_data, order)
         return DataLoader(shuffled_data, batch_size=self.job.batch_size, num_workers=1)
 
-    def trainLoop(self):
+    def trainLoop(self, replicate_dir):
         def train_epoch():  # name function so that job.cached() prints name
-            return self.train_epoch(None, None, 0)
+            return self.train_epoch(None, None, 0, replicate_dir)
 
-        ckpt = self.job.cached(train_epoch, self.model_dir, f"epoch={0}.pt")
+        ckpt = self.job.cached(train_epoch, replicate_dir, f"epoch={0}.pt")
         # epoch 0 is to save checkpoint at initialization
         for i, order in enumerate(self.example_orders()):
             epoch = i + 1
             dataloader = self.get_dataloader(self.data, order)
             # redefine function with previous ckpt as input
             def train_epoch():
-                return self.train_epoch(ckpt, dataloader, epoch)
+                return self.train_epoch(ckpt, dataloader, epoch, replicate_dir)
 
             # update with next ckpt
-            ckpt = self.job.cached(train_epoch, self.model_dir, f"epoch={epoch}.pt")
+            ckpt = self.job.cached(train_epoch, replicate_dir, f"epoch={epoch}.pt")
 
-    def train_epoch(self, ckpt, dataloader, epoch):
+    def train_epoch(self, ckpt, dataloader, epoch, replicate_dir):
         model, optimizer, scheduler = self.get_model_optim(ckpt, epoch)
         batch_loss, batch_acc, eval_logits = [], [], []
         if (
@@ -83,7 +79,7 @@ class train:
                 )
         # save per-iteration probabilities
         self.job.save_obj_to_subdir(
-            torch.stack(eval_logits, axis=0), self.model_dir, f"eval_logits={epoch}.pt"
+            torch.stack(eval_logits, axis=0), replicate_dir, f"eval_logits={epoch}.pt"
         )
         # return ckpt
         return self.checkpoint(model, optimizer, scheduler, batch_loss, batch_acc)

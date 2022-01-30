@@ -1,13 +1,17 @@
 import os
 import datetime
+from matplotlib.pyplot import plot
 import torch
+from forget.damage.example_noise import ExampleIidEraseNoise, ExampleIidGaussianNoise
 from forget.main import parser
+from forget.postprocess.metrics import Metrics
+from forget.postprocess.pair_rep_metrics import PairReplicateMetrics
 from forget.training import trainer
-from forget.damage.noise import NoisePerturbation
+from forget.damage.model_noise import ModelNoisePerturbation
 from forget.damage.prune import PrunePerturbation
-from forget.main import noise_plots
+from forget.main.exp_plots import ExperimentPlots
 from forget.postprocess.plot_metrics import PlotMetrics
-from forget.postprocess.train_metrics import GenerateMetrics
+from forget.postprocess.single_rep_metrics import SingleReplicateMetrics
 
 
 class run_experiment:
@@ -34,8 +38,12 @@ class run_experiment:
                     model_trainer = trainer.train(job, model_idx)
                     model_trainer.trainLoop()
 
-            noise_exp = NoisePerturbation(job, filter_layer_names_containing=["conv"])
-            prune_exp = PrunePerturbation(job)
+            perturbations = [
+                ExampleIidEraseNoise(job),
+                ExampleIidGaussianNoise(job),
+                PrunePerturbation(job),
+                ModelNoisePerturbation(job, filter_layer_names_containing=["conv"]),
+            ]
             if "do process" in job.hparams:
                 """
                 PROCESS STEP
@@ -44,8 +52,9 @@ class run_experiment:
 
                 """Generate and evaluate model with noise perturbations
                 """
-                noise_exp.gen_noise_logits()
-                prune_exp.gen_prune_logits()
+                for perturbation in perturbations:
+                    print("PERTURBATION", perturbation.name)
+                    perturbation.gen_logits()
 
                 """Plot model weights
                 """
@@ -64,59 +73,54 @@ class run_experiment:
                 #     )
 
             plotter = PlotMetrics(job, subdir=f"plots-ep{job.n_epochs}")
+            metrics_generator = SingleReplicateMetrics(job, plotter)
+            pair_generator = PairReplicateMetrics(job, plotter)
             if "do metrics" in job.hparams:
                 """Plot auc, diff, and forgetting ranks"""
-                gen = GenerateMetrics(job, plotter)
                 plotter.plot_class_counts(
-                    "labels", gen.labels
+                    "labels", job.get_eval_labels()
                 )  # check label distribution
+                metrics_generator.gen_metrics_from_training()
+                for perturbation in perturbations:
+                    print("PERTURB METRICS", perturbation.name)
+                    metrics_generator.gen_metrics_from_perturbation(perturbation)
+                metrics_generator.combine_replicates()
 
-                gen.gen_train_metrics()
-                gen.gen_noise_metrics(noise_exp.subdir, noise_exp.scales)
-                gen.gen_prune_metrics(prune_exp.subdir, prune_exp.scales)
+                pair_generator.gen_metrics_from_training()
+                pair_generator.combine_replicates()
 
             if "do plot" in job.hparams:
-                metrics_dir = os.path.join(job.save_path, f"metrics-ep{job.n_epochs}")
-                files = os.listdir(metrics_dir)
-                metrics = {
-                    f[: -len(".metric")]: torch.load(
-                        os.path.join(metrics_dir, f), map_location=torch.device("cpu")
-                    )
-                    for f in files
-                    if f.endswith(".metric")
-                }
-                noise_metric_names = filter(
-                    lambda x: x.startswith("noise"), metrics.keys()
-                )
-                noise_metrics = {n: metrics[n] for n in noise_metric_names}
+                exp_plots = ExperimentPlots(job, plotter)
+                metrics = metrics_generator.load_metrics()
+                pair_metrics = pair_generator.load_metrics()
                 # summarize noise_metrics over S to get R x N (same as train_metrics)
-                # noise_plots.plot_noise_metrics_by_sample(plotter, noise_metrics)
-                noise_metrics = noise_plots.average_noise_metrics(noise_metrics)
-                for k, v in noise_metrics.items():
-                    metrics[k] = v
-                for k, v in metrics.items():
-                    if len(v.shape) != 2:
-                        metrics[k] = v.squeeze()
-                        assert len(metrics[k].shape) == 2
-                    print(k, metrics[k].shape)
+                averaged_metrics = Metrics.average_over_samples(metrics)
+                perturb_metrics = Metrics.filter_metrics(
+                    averaged_metrics, "first_forget"
+                )
+                train_metrics = Metrics.filter_metrics(
+                    averaged_metrics, "train-first_learn"
+                )
+                averaged_key_metrics = {**perturb_metrics, **train_metrics}
+                pair_and_single_metrics = {
+                    **Metrics.average_over_replicates(averaged_key_metrics),
+                    **Metrics.average_over_replicates(
+                        Metrics.average_over_samples(pair_metrics)
+                    ),
+                }
+                for cutoff in [1, 30, 70]:
+                    if cutoff < job.n_epochs:
+                        learned_before_iter = (
+                            job.n_epochs - cutoff
+                        ) * job.n_iter_per_epoch
+                        print(f"Plotting cutoff={cutoff}")
+                        exp_plots.plot_learned_before_cutoff(
+                            pair_and_single_metrics, learned_before_iter
+                        )
+                exp_plots.plot_all(averaged_metrics)
+                # exp_plots.plot_all(pair_metrics)
 
-                for cutoff in [
-                    0,
-                    job.n_iter_per_epoch,
-                    10 * job.n_iter_per_epoch,
-                    30 * job.n_iter_per_epoch,
-                    70 * job.n_iter_per_epoch,
-                ]:
-                    learned_before_iter = job.n_epochs * job.n_iter_per_epoch - cutoff
-                    print(
-                        "Plotting with learned cutoff at",
-                        cutoff,
-                        "iterations",
-                        "it",
-                        learned_before_iter,
-                    )
-                    noise_plots.plots_2021_11_24(plotter, metrics, learned_before_iter)
-                noise_plots.plot_comparisons(plotter, metrics)
-                plotter.plot_metric_rank_qq(metrics)
+                # for perturbation in perturbations:
+                #     exp_plots.plot_metrics_by_sample(metrics, perturbation)
 
         print(f"Jobs finished at t={datetime.datetime.now()}")
