@@ -2,12 +2,12 @@ import abc
 import time
 import numpy as np
 import torch
-from forget.job import evaluate_one_batch
-from forget.postprocess.transforms import stats_str
+
+from forget.job import Job
 
 
 class Perturbation:
-    def __init__(self, name: str, job, has_multiple_samples):
+    def __init__(self, name: str, job: Job, has_multiple_samples: bool):
         self.name = name
         self.job = job
         self.n_samples = 1
@@ -30,7 +30,7 @@ class Perturbation:
         )
 
     @abc.abstractmethod
-    def apply_perturbation(self, noise, scale, model, examples):
+    def apply_perturbation(self, noise, scale_idx, scale, model, examples):
         return model, examples
 
     @abc.abstractmethod
@@ -57,15 +57,15 @@ class Perturbation:
                 logits, accuracies = [], []
                 for i in range(self.n_samples):
                     per_noise_logits = []
-                    for scale in self.scales:
+                    for j, scale in enumerate(self.scales):
                         start_time = time.perf_counter()
                         noise = self.gen_noise_sample()
                         if type(noise) == torch.Tensor:  # send to CUDA if tensor
                             noise = noise.cuda()
                         perturb_model, perturb_examples = self.apply_perturbation(
-                            noise, scale, model, examples
+                            noise, j, scale, model, examples
                         )
-                        output, accuracy = evaluate_one_batch(
+                        output, accuracy = self.eval(
                             perturb_model, perturb_examples, labels
                         )
                         accuracies.append(accuracy)
@@ -86,6 +86,16 @@ class Perturbation:
             yield self.job.cached(
                 perturb_logit, self.subdir, f"logits-m{replicate}.pt", to_cpu=True
             )
+
+    def eval(self, model, examples, labels):
+        model.eval()
+        with torch.no_grad():
+            output = model(examples).detach()
+            accuracy = (
+                torch.sum(torch.argmax(output, dim=1) == labels).float()
+                / labels.shape[0]
+            )
+        return output, accuracy.item()
 
     def interpolate_model_state(
         self, source_state, target_state, scale, combine_fn, layer_name_contains

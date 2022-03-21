@@ -1,17 +1,16 @@
-import os
 import datetime
-from matplotlib.pyplot import plot
-import torch
-from forget.damage.example_noise import ExampleIidEraseNoise, ExampleIidGaussianNoise
+from forget.metrics.eval_metrics import EvalMetrics
+
+from forget.perturb.example_noise import ExampleIidEraseNoise, ExampleIidGaussianNoise
 from forget.main import parser
-from forget.postprocess.metrics import Metrics
-from forget.postprocess.pair_rep_metrics import PairReplicateMetrics
+from forget.metrics.tvd_metrics import TotalVariationDistanceMetrics
 from forget.training import trainer
-from forget.damage.model_noise import ModelNoisePerturbation
-from forget.damage.prune import PrunePerturbation
-from forget.main.exp_plots import ExperimentPlots
-from forget.postprocess.plot_metrics import PlotMetrics
-from forget.postprocess.single_rep_metrics import SingleReplicateMetrics
+from forget.perturb.model_noise import ModelNoisePerturbation
+from forget.perturb.prune import PrunePerturbation
+from forget.plot.plotter import Plotter
+from forget.metrics.train_metrics import TrainMetrics
+from forget.metrics.perturb_metrics import PerturbMetrics
+from forget.training.eval import plot_training, evaluate_trained_model
 
 
 class run_experiment:
@@ -21,6 +20,15 @@ class run_experiment:
     1. Pretraining (e.g. load model from OpenLTH)
     2. Training (for each job, pass models onto trainer.py which trains it and stores the data)
     """
+
+    @staticmethod
+    def perturbations(job):
+        return [
+            ExampleIidEraseNoise(job),
+            ExampleIidGaussianNoise(job),
+            PrunePerturbation(job),
+            ModelNoisePerturbation(job, filter_layer_names_containing=["conv"]),
+        ]
 
     def __init__(self):
         # get config files from parser
@@ -33,18 +41,28 @@ class run_experiment:
                 TRAINING STEP
                 """
                 print(f"Starting training...")
-                for model_idx in range(job.n_replicates):
-                    print(f"{job.name} m={model_idx}, t={datetime.datetime.now()}")
-                    model_trainer = trainer.train(job, model_idx)
-                    model_trainer.trainLoop()
+                if job.hparams["model init"] == "fixed":
 
-            perturbations = [
-                ExampleIidEraseNoise(job),
-                ExampleIidGaussianNoise(job),
-                PrunePerturbation(job),
-                ModelNoisePerturbation(job, filter_layer_names_containing=["conv"]),
-            ]
-            if "do process" in job.hparams:
+                    def get_fixed_init():
+                        return job.get_model().state_dict()
+
+                    fixed_init = job.cached(
+                        get_fixed_init, "fixed_init", f"model_state_dict.pt"
+                    )
+                else:
+                    fixed_init = None
+                model_trainer = trainer.train(job)
+                for _, replicate_dir in job.replicates():
+                    if not model_trainer.is_finished(replicate_dir):
+                        print(
+                            f"{job.name} {replicate_dir}, t={datetime.datetime.now()}"
+                        )
+                        model_trainer.trainLoop(replicate_dir, fixed_init=fixed_init)
+                evaluate_trained_model(job)
+                plot_training(job)
+
+            perturbations = self.perturbations(job)
+            if "do perturb" in job.hparams:
                 """
                 PROCESS STEP
                 """
@@ -72,55 +90,23 @@ class run_experiment:
                 #     ['bn1.bias', 'bn2.bias'],
                 #     )
 
-            plotter = PlotMetrics(job, subdir=f"plots-ep{job.n_epochs}")
-            metrics_generator = SingleReplicateMetrics(job, plotter)
-            pair_generator = PairReplicateMetrics(job, plotter)
+            plotter = Plotter(job, subdir=f"plots-ep{job.n_epochs}")
+            train_metrics = TrainMetrics(job, plotter)
+            perturb_metrics = PerturbMetrics(job, plotter)
+            eval_metrics = EvalMetrics(job, plotter)
+            tvd_metrics = TotalVariationDistanceMetrics(job, plotter)
             if "do metrics" in job.hparams:
                 """Plot auc, diff, and forgetting ranks"""
                 plotter.plot_class_counts(
                     "labels", job.get_eval_labels()
                 )  # check label distribution
-                metrics_generator.gen_metrics_from_training()
+                train_metrics.gen_metrics()
                 for perturbation in perturbations:
                     print("PERTURB METRICS", perturbation.name)
-                    metrics_generator.gen_metrics_from_perturbation(perturbation)
-                metrics_generator.combine_replicates()
+                    perturb_metrics.gen_metrics(perturbation)
+                eval_metrics.gen_metrics()
+                tvd_metrics.gen_metrics()
 
-                pair_generator.gen_metrics_from_training()
-                pair_generator.combine_replicates()
+                train_metrics.combine_replicates()
 
-            if "do plot" in job.hparams:
-                exp_plots = ExperimentPlots(job, plotter)
-                metrics = metrics_generator.load_metrics()
-                pair_metrics = pair_generator.load_metrics()
-                # summarize noise_metrics over S to get R x N (same as train_metrics)
-                averaged_metrics = Metrics.average_over_samples(metrics)
-                perturb_metrics = Metrics.filter_metrics(
-                    averaged_metrics, "first_forget"
-                )
-                train_metrics = Metrics.filter_metrics(
-                    averaged_metrics, "train-first_learn"
-                )
-                averaged_key_metrics = {**perturb_metrics, **train_metrics}
-                pair_and_single_metrics = {
-                    **Metrics.average_over_replicates(averaged_key_metrics),
-                    **Metrics.average_over_replicates(
-                        Metrics.average_over_samples(pair_metrics)
-                    ),
-                }
-                for cutoff in [1, 30, 70]:
-                    if cutoff < job.n_epochs:
-                        learned_before_iter = (
-                            job.n_epochs - cutoff
-                        ) * job.n_iter_per_epoch
-                        print(f"Plotting cutoff={cutoff}")
-                        exp_plots.plot_learned_before_cutoff(
-                            pair_and_single_metrics, learned_before_iter
-                        )
-                exp_plots.plot_all(averaged_metrics)
-                # exp_plots.plot_all(pair_metrics)
-
-                # for perturbation in perturbations:
-                #     exp_plots.plot_metrics_by_sample(metrics, perturbation)
-
-        print(f"Jobs finished at t={datetime.datetime.now()}")
+        print(f"Experiment finished at t={datetime.datetime.now()}")

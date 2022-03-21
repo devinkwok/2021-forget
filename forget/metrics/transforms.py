@@ -157,7 +157,7 @@ def diff_norm(
     if norm_power <= 0:
         norm = np.max(diff, axis=-2)
     else:
-        norm = (np.sum(diff ** norm_power, axis=-2) / diff.shape[-2]) ** (
+        norm = (np.sum(diff**norm_power, axis=-2) / diff.shape[-2]) ** (
             1 / norm_power
         )
     if divide_by_iters:
@@ -264,51 +264,45 @@ def mask_iter_by_batch(
     return iter_mask
 
 
-def first_forget(output_prob_by_iter: np.ndarray, scale=None) -> np.ndarray:
-    """Finds index of first forgetting event (assuming example is learned at time 0).
-    If example was never learned, return 0 or scale[0].
-    If example is never forgotten, return I or scale[I].
+def last_always_true_index(boolean_mask: np.ndarray, scale=None) -> np.ndarray:
+    """Finds first index after which boolean_mask is always True
 
     Args:
-        output_prob_by_iter (np.ndarray): signed_prob scores
+        boolean_mask (np.ndarray): mask of boolean criterion for each index
             with dimensions $(\dots, I \times N)$.
         scale (np.ndarray, optional): If set, map indexes to
             these values. Has dimension (I+1). Defaults to None.
 
     Returns:
         np.ndarray: array of $(\dots, N)$ index or
-            iteration value of first forgetting event.
+            scale value after which boolean_mask is always True.
     """
-    is_correct = output_prob_by_iter > 0
-    # cumulative product is 1 until incorrect, then 0
-    # add up all 1's to get iter of first forgetting event
+    # cumulative product is 1 until False, then 0
+    # add up all 1's to get iter of first True value
     # 0 if all incorrect, shape[-2] if all correct
-    first = np.sum(np.cumprod(is_correct, axis=-2), axis=-2)
+    first = np.sum(np.cumprod(boolean_mask, axis=-2), axis=-2)
     if scale is not None:
-        assert scale.shape == (output_prob_by_iter.shape[-2] + 1,)
+        assert scale.shape == (boolean_mask.shape[-2] + 1,)
         first = np.take(scale, first)
     return first
 
 
-def first_learn(output_prob_by_iter: np.ndarray, scale=None) -> np.ndarray:
-    """Finds index of first learning event after which there is no more forgetting.
-    (assuming example is not learned at time 0).
-    If example was never learned, return I or scale[I].
-    If example is always learned, return 0 or scale[0].
+def first_always_true_index(boolean_mask: np.ndarray, scale=None) -> np.ndarray:
+    """Finds last index before which boolean_mask is always True
 
     Args:
-        output_prob_by_iter (np.ndarray): signed_prob scores
+        boolean_mask (np.ndarray): mask of boolean criterion for each index
             with dimensions $(\dots, I \times N)$.
         scale (np.ndarray, optional): If set, map indexes to
             these values. Has dimension (I+1). Defaults to None.
 
     Returns:
         np.ndarray: array of $(\dots, N)$ index or
-            iteration value of first learning event.
+            scale value after which boolean_mask is always True.
     """
     if scale is None:
-        scale = np.arange(output_prob_by_iter.shape[-2] + 1)
-    return first_forget(np.flip(output_prob_by_iter, axis=-2), scale=np.flip(scale))
+        scale = np.arange(boolean_mask.shape[-2] + 1)
+    return last_always_true_index(np.flip(boolean_mask, axis=-2), scale=np.flip(scale))
 
 
 def stats_str(array):
@@ -367,6 +361,9 @@ def center_of_mass(weight: np.ndarray, index: np.ndarray = None, normalize=True)
         index (np.ndarray, optional): If None, weights are multiplied by the index (1, 2, \dots I).
             Otherwise weights are multiplied by this array of dimension I. Defaults to None.
         normalize (bool, optional): If True, divide result by sum of weights. Defaults to True.
+
+    Returns:
+        np.ndarray: dot product of weight and index of dimension (..., N)
     """
     if index is None:
         index = np.arange(weight.shape[-2])
@@ -375,3 +372,28 @@ def center_of_mass(weight: np.ndarray, index: np.ndarray = None, normalize=True)
     if normalize:
         center_of_mass = center_of_mass / np.sum(weight, axis=-2)
     return center_of_mass
+
+
+def moving_average(input: np.ndarray, window_len: int, pad_ends=False):
+    """Computes moving average over 2nd last dimension (time or iterations) of input.
+
+    Args:
+        input (np.ndarray): array of dimension (..., I \times N).
+        window_len (int): number of iterations/timesteps to compute moving average over.
+
+    Returns:
+        np.ndarray: moving average of dimension (..., I - window_len + 1, N)
+    """
+    running_total = np.cumsum(input, axis=-2)
+    average = running_total[..., window_len:, :] - running_total[..., :-window_len, :]
+    # running total does not start from 0, include point at window_len - 1
+    average = np.concatenate(
+        [running_total[..., window_len - 1 : window_len, :], average], axis=-2
+    )
+    if pad_ends:
+        n_pad_start = (input.shape[-2] - average.shape[-2]) // 2
+        n_pad_end = input.shape[-2] - average.shape[-2] - n_pad_start
+        start_pad = np.repeat(average[..., :1, :], n_pad_start, axis=-2)
+        end_pad = np.repeat(average[..., -1:, :], n_pad_end, axis=-2)
+        average = np.concatenate([start_pad, average, end_pad], axis=-2)
+    return average / window_len

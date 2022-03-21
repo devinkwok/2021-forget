@@ -1,12 +1,13 @@
 import numpy as np
+import torch
 from forget.job import Job
-from forget.postprocess.metrics import Metrics
-from forget.postprocess.plot_metrics import PlotMetrics
-from forget.postprocess.transforms import stats_str
+from forget.metrics.metrics import Metrics
+from forget.plot.plotter import Plotter
+from forget.metrics.transforms import stats_str, moving_average
 
 
-class ExperimentPlots:
-    def __init__(self, job: Job, plotter: PlotMetrics):
+class JobPlots:
+    def __init__(self, job: Job, plotter: Plotter):
         self.job = job
         self.plotter = plotter
         self.train_test = np.concatenate(
@@ -40,6 +41,16 @@ class ExperimentPlots:
             self.plotter.plt_self_corr, name, row_metrics, col_metrics, mask=mask
         )
 
+    def corr_heatmap(self, name, row_metrics, col_metrics, mask=None):
+        self.plotter.plot_corr_heatmap(
+            name,
+            row_metrics,
+            col_metrics,
+            self.train_test,
+            ["Train", "Test"],
+            mask=mask,
+        )
+
     def jaccard(self, name, row_metrics, col_metrics, mask=None):
         self.plot_train_test(
             self.plotter.plt_jaccard_curve, name, row_metrics, col_metrics, mask=mask
@@ -65,11 +76,15 @@ class ExperimentPlots:
                 row_metrics = metric_groups[keys[i]]
                 col_metrics = metric_groups[keys[j]]
                 self.scatter(name, row_metrics, col_metrics, mask=mask)
-                self.pair_corr(name, row_metrics, col_metrics, mask=mask)
-                # if list(row_metrics.values())[0].shape[0] > 1:  # can't do self corr over single rep
-                #     self.self_corr(name, row_metrics, col_metrics, mask=mask)
-                #     self.pair_jaccard(name, row_metrics, col_metrics, mask=mask)
-                self.jaccard(name, row_metrics, col_metrics, mask=mask)
+                if (
+                    list(row_metrics.values())[0].shape[0] > 1
+                ):  # can't do self corr over single rep
+                    #     self.self_corr(name, row_metrics, col_metrics, mask=mask)
+                    #     self.pair_jaccard(name, row_metrics, col_metrics, mask=mask)
+                    self.pair_corr(name, row_metrics, col_metrics, mask=mask)
+                else:
+                    self.corr_heatmap(name, row_metrics, col_metrics, mask=mask)
+                # self.jaccard(name, row_metrics, col_metrics, mask=mask)
 
     def rank(self, metric):
         """Turns metrics into ranks.
@@ -99,45 +114,56 @@ class ExperimentPlots:
                 if homogenous over means, low variance as a % of noise scale, then mean is representative
                 this allows averaging out S (sample dimension)
         """
-        meanS = Metrics.apply(
+        # meanS = Metrics.apply(
+        #     metrics,
+        #     lambda metric: np.mean(metric, axis=-2, keepdims=True),
+        #     suffix="mu",
+        # )
+        def unsqueeze(metric):
+            if len(metric.shape) < 3:
+                metric = metric.reshape(metric.shape[0], 1, metric.shape[-1])
+                return metric
+            return metric
+
+        metrics = Metrics.apply(
             metrics,
-            lambda metric: np.mean(metric, axis=-2, keepdims=True),
-            suffix="mu",
+            unsqueeze,
         )
         medianS = Metrics.apply(
             metrics,
             lambda metric: np.median(metric, axis=-2, keepdims=True),
             suffix="med",
         )
-        stdS = Metrics.apply(
-            metrics,
-            lambda metric: np.std(metric, axis=-2, keepdims=True),
-            suffix="sd",
-        )
-        self.plot_pairwise({"id": metrics, "muS": meanS}, perturbation.name)
-        self.plot_pairwise({"id": metrics, "medS": medianS}, perturbation.name)
-        self.plot_pairwise({"stdS": stdS, "muS": meanS}, perturbation.name)
+        # stdS = Metrics.apply(
+        #     metrics,
+        #     lambda metric: np.std(metric, axis=-2, keepdims=True),
+        #     suffix="sd",
+        # )
+        # self.plot_pairwise({"id": metrics, "muS": meanS}, perturbation.name)
+        # self.plot_pairwise({"id": metrics, "medS": medianS}, perturbation.name)
+        # self.plot_pairwise({"stdS": stdS, "muS": meanS}, perturbation.name)
+        self.scatter(f"id_medS-{name}", metrics, medianS)
         """ C) scatter meanS to medianS
                 if these look diagonal, then median is equivalent to mean
         """
-        self.plot_pairwise({"medS": medianS, "muS": meanS}, perturbation.name)
+        # self.plot_pairwise({"medS": medianS, "muS": meanS}, perturbation.name)
         """ D) scatter rankNofmeanS/medianS to meanS/medianSofrankN
                 if these look the same, then order of applying rank/mean doesn't matter
             A, B, C, D confirm use of median over S for rank corr with other metrics
         """
-        rankofmedians = Metrics.apply(
-            metrics,
-            lambda metric: self.rank(np.median(metric, axis=-2)),
-            suffix="rkmed",
-        )
-        medianofranks = Metrics.apply(
-            metrics,
-            lambda metric: np.median(self.rank(metric), axis=-2),
-            suffix="medrk",
-        )
-        self.plot_pairwise(
-            {"medofrk": medianofranks, "rkofmed": rankofmedians}, perturbation.name
-        )
+        # rankofmedians = Metrics.apply(
+        #     metrics,
+        #     lambda metric: self.rank(np.median(metric, axis=-2)),
+        #     suffix="rkmed",
+        # )
+        # medianofranks = Metrics.apply(
+        #     metrics,
+        #     lambda metric: np.median(self.rank(metric), axis=-2),
+        #     suffix="medrk",
+        # )
+        # self.plot_pairwise(
+        #     {"medofrk": medianofranks, "rkofmed": rankofmedians}, perturbation.name
+        # )
 
     def plot_all(self, metrics):
         # plot quantiles for each metric
@@ -172,14 +198,24 @@ class ExperimentPlots:
         )
         self.plot_pairwise({"stdR": stdR, "medR": medianR}, "all")
 
+    def masked_median(self, metrics, learned_before_iter_inclusive):
+        mask = self.mask_learned(
+            metrics["train-first_learn"], learned_before_iter_inclusive
+        )
+        n_masked = np.sum(mask)
+        median = Metrics.apply(
+            metrics, lambda metric: self._masked_median(metric, mask), suffix=f"mm"
+        )
+        return median, mask
+
     def plot_learned_before_cutoff(self, metrics, learned_before_iter_inclusive):
         mask = self.mask_learned(
             metrics["train-first_learn"], learned_before_iter_inclusive
         )
         n_masked = np.sum(mask)
-        medianR = Metrics.apply(
-            metrics, lambda metric: self.masked_median(metric, mask), suffix="med"
-        )
+        # medianR = Metrics.apply(
+        #     metrics, lambda metric: self.masked_median(metric, mask), suffix="med"
+        # )
         plot_prefix = f"maskto{str(learned_before_iter_inclusive)}_n{n_masked}"
         # scatter plots with late_mean_prob coloring
         # self.plotter.plot_array(
@@ -193,21 +229,12 @@ class ExperimentPlots:
         #     row_metrics=medianR, col_metrics=medianR,
         #     mask=mask, group=metrics["train-late_mean_prob"])
         # other plots
-        self.plot_pairwise({"id": metrics, "medR": medianR}, plot_prefix, mask=mask)
+        self.plot_pairwise({"id": metrics}, plot_prefix, mask=mask)
+        # self.plot_pairwise({"medR": medianR}, plot_prefix, mask=mask)
+
         # plot how many reps each example is learned in
         # n_reps_learned = {"n_reps_learned": np.sum(mask, axis=-2, keepdims=True)}
         # self.hist(plot_prefix + "n_reps_learned", n_reps_learned, mask, mask=mask)
-
-    def masked_median(self, metric: np.ndarray, mask: np.ndarray) -> np.ndarray:
-        # take median over R but mask each array first
-        assert metric.shape == mask.shape, (metric.shape, mask.shape)
-        medians = [
-            np.median(example[rep_mask]) for example, rep_mask in zip(metric.T, mask.T)
-        ]
-        medians = np.array(medians).reshape(1, -1)
-        # nan occurs if all replicates masked, set to 0 (won't be plotted due to being masked)
-        medians[np.isnan(medians)] = 0
-        return medians
 
     def mask_learned(self, first_learn, learned_before_iter_inclusive=-1):
         if learned_before_iter_inclusive < 0:
@@ -221,3 +248,57 @@ class ExperimentPlots:
             stats_str(first_learn),
         )
         return mask
+
+    def _masked_median(self, metric: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        # take median over R but mask each array first
+        assert metric.shape == mask.shape, (metric.shape, mask.shape)
+        medians = [
+            np.median(example[rep_mask]) for example, rep_mask in zip(metric.T, mask.T)
+        ]
+        medians = np.array(medians).reshape(1, -1)
+        # nan occurs if all replicates masked, set to 0 (won't be plotted due to being masked)
+        medians[np.isnan(medians)] = 0
+        return medians
+
+    def plot_first_below_qq(self, metrics):
+        # combine metrics into one array
+        keys, values = [*zip(*metrics.items())]
+        group_idx = [np.full_like(values[i], i, dtype=int) for i in range(len(keys))]
+        self.plotter.plot_array(
+            self.plotter.plt_quantiles,
+            "first_below",
+            row_metrics={"first_below": np.concatenate(values, axis=0)},
+            group=np.concatenate(group_idx, axis=0),
+            group_names=keys,
+            width=16,
+        )
+
+    def plot_iter_curves(self, curve_dict, name):
+        example_idx = curve_dict["example_idx"]
+        group = curve_dict["metric_id"]
+        group_names = curve_dict["metric_names"]
+        lines = {}
+        for k, v in curve_dict["lines"].items():
+            # include indices of selected examples in labels
+            selected_idx = ",".join(str(x) for x in example_idx[k])
+            lines[k + selected_idx] = v
+        if name.startswith("train") or name.startswith("tvd"):
+            self.plotter.plot_smooth_curves(
+                name,
+                lines,
+                group,
+                group_names,
+                smoothing=self.job.n_iter_per_epoch,
+                hlines=[0.0],
+                vlines=[
+                    79 * self.job.n_iter_per_epoch,
+                    119 * self.job.n_iter_per_epoch,
+                ],
+            )
+        else:
+            self.plotter.plot_smooth_curves(
+                name,
+                lines,
+                group,
+                group_names,
+            )

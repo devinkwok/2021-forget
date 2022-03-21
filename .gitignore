@@ -3,3 +3,6 @@ open_lth
 __pycache__
 *.pyc
 out/
+data/
+notebooks/
+.vscode/

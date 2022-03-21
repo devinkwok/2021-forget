@@ -1,12 +1,14 @@
 import os
 import typing
+from collections import OrderedDict
 import numpy as np
 import torch
-from forget.postprocess import transforms
+from forget.job import Job
+from forget.metrics import transforms
 
 
 class Metrics:
-    def __init__(self, job, plotter):
+    def __init__(self, job: Job, plotter):
         # filter batch by train/test examples
         self.job = job
         self.subdir = f"metrics-ep{self.job.n_epochs}"
@@ -16,11 +18,12 @@ class Metrics:
             * self.job.n_iter_per_epoch
         )
 
-    def gen_metrics(
+    def _gen_metrics(
         self,
         name: str,
         input_source: typing.Iterable[np.ndarray],
         metric_generators: typing.Dict[str, typing.Callable],
+        do_plot_curves=True,
     ):
         # logits in shape (S x I x N) where S is noise samples, I iters, N examples
         for i, array in enumerate(input_source):
@@ -36,7 +39,8 @@ class Metrics:
                 )
                 last_metrics[metric_name] = metric
         # check curves of input_source at highest/lowest values of each metric, use random (last) rep
-        self.plotter.plot_curves_by_rank(last_array, last_metrics)
+        if do_plot_curves:
+            self.save_curves_by_rank(last_array, last_metrics)
         return list(last_metrics.keys())
 
     def list_metric_names(self):
@@ -72,7 +76,8 @@ class Metrics:
     def load_metrics(self):
         dir = os.path.join(self.job.save_path, self.subdir)
         files = os.listdir(dir)
-        metric_dict = {}
+        files.sort()
+        metric_dict = OrderedDict()
         for f in files:
             if f.endswith(".metric"):
                 metric = torch.load(
@@ -113,4 +118,38 @@ class Metrics:
             lambda metric: np.median(metric, axis=0)
             if len(metric.shape) == 2
             else metric,
+        )
+
+    def save_curves_by_rank(self, scores, dict_metrics, n_rank=1):
+        # for each metric, plot largest, middle, and smallest ranked example of first replicate/sample
+        scores = scores.reshape(-1, scores.shape[-2], scores.shape[-1])[0]
+        mid = scores.shape[-1] // 2 - n_rank // 2  # rank of middle example
+        plot_name = ""
+        selected, selected_ranks = {}, {}
+        for name, metric in dict_metrics.items():
+            # group dims to (RS... N) and take first element of RS
+            metric = metric.reshape(-1, metric.shape[-1])[0]
+            assert metric.shape[-1] == scores.shape[-1]
+            ranks = np.argsort(metric)
+            selected_ranks[name] = np.concatenate(
+                [ranks[:n_rank], ranks[mid : mid + n_rank], ranks[-n_rank:]]
+            )
+            # swap axes to (lines, iters)
+            selected[name] = scores[:, selected_ranks[name]].transpose(1, 0)
+            plot_name = (
+                name  # take any metric as a name to differentiate from other plots
+            )
+        group = (
+            np.arange(3).repeat(n_rank).reshape(-1, 1).repeat(scores.shape[-2], axis=1)
+        )
+        group_names = ["Low", "Med", "High"]
+        self.job.save_obj_to_subdir(
+            {
+                "lines": selected,
+                "example_idx": selected_ranks,
+                "metric_id": group,
+                "metric_names": group_names,
+            },
+            self.subdir,
+            f"{plot_name}-etc_curves.mdict",
         )

@@ -31,6 +31,6 @@ if ! [ -d "$SLURM_TMPDIR/data" ]; then
 fi
 
 python $SRC_DIR/forget/main/run.py \
-    --config_file=$SRC_DIR/config/exp_perturb.ini \
+    --config_file=$SRC_DIR/config/default_config.ini \
     --data_dir=$SLURM_TMPDIR/data \
     --out_dir=$HOME/scratch \

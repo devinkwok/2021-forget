@@ -1,5 +1,5 @@
 import torch
-from forget.damage.perturb import Perturbation
+from forget.perturb.perturb import Perturbation
 
 
 class ModelNoisePerturbation(Perturbation):
@@ -29,7 +29,7 @@ class ModelNoisePerturbation(Perturbation):
     def gen_noise_sample(self):
         return self.sample_gaussians()
 
-    def apply_perturbation(self, noise, scale, model, examples):
+    def apply_perturbation(self, noise, scale_idx, scale, model, examples):
         noisy_model = super().interpolate_model_state(
             model.state_dict(), noise, scale, self.combine_fn, self.name_contains
         )

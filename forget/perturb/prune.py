@@ -1,13 +1,13 @@
 import numpy as np
 import torch
-from forget.damage.perturb import Perturbation
+from forget.perturb.perturb import Perturbation
 
 
 class PrunePerturbation(Perturbation):
     def __init__(self, job):
         super().__init__("prune_magn_notrain", job, False)
 
-    def apply_perturbation(self, noise, scale, model, examples):
+    def apply_perturbation(self, noise, scale_idx, scale, model, examples):
         mask = prune_mask(model, scale)
         # copy model to avoid affecting original
         pruned_model = self.job.get_model(model.state_dict())
