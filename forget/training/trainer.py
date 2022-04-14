@@ -119,7 +119,7 @@ class train:
         # if "model_state_dict" is None, this will create a new random init
         model = self.job.get_model(state_dict=ckpt["model_state_dict"])
 
-        if self.job.hparams["dataset"] == "CIFAR10":
+        if self.job.hparams["dataset"] == "CIFAR10" or self.job.hparams["dataset"] == "CIFAR100":
             # hparams for cifar10 from Frankle et al. Training Batchnorm and only Batchnorm
             optimizer = optim.SGD(
                 model.parameters(), lr=0.1, momentum=0.9, weight_decay=1e-4

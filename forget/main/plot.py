@@ -74,6 +74,7 @@ class ExperimentPlotter:
         averaged_metrics = Metrics.average_over_samples(metrics)
         perturb_metrics = Metrics.filter_metrics(averaged_metrics, self.filter_type)
         train_metrics = Metrics.filter_metrics(averaged_metrics, "train-first_learn")
+        eval_metrics = Metrics.filter_metrics(averaged_metrics, "eval-")
         train_metrics["train-forget"] = averaged_metrics["train-forget"]
         # only keep one first_below metric
         tvd_keys = [
@@ -81,7 +82,7 @@ class ExperimentPlotter:
             "tvd-first_below_1_16",
         ]
         tvd_metrics = {k: metrics[k] for k in tvd_keys}
-        per_replicate_metrics = {**perturb_metrics, **train_metrics}
+        per_replicate_metrics = {**perturb_metrics, **train_metrics, **eval_metrics}
         median_metrics, median_mask = job_plots.masked_median(
             per_replicate_metrics, learned_before_iter
         )
@@ -236,17 +237,17 @@ class ExperimentPlotter:
         diff_plotter.plot_diff_and_variance(
             self.parser.list_jobs()[0], self.parser.list_jobs()[1]
         )
-        # job_plots, _, job_metrics, _, _, _ = self.get_cross_job_metrics()
-        # for job1_name, job1_metrics, job2_name, job2_metrics in self.cross_job_iter(job_metrics):
-        #     # take difference between metrics, plot against job1
-        #     diff = {f"{k}-diff": job1_metrics[k] - job2_metrics[k] for k in job1_metrics.keys()}
-        #     job_plots.scatter(f"{job1_name}-{job2_name}-id_diff", job1_metrics, diff)
-        #     # average abs diff over replicates, plot against carlini metrics
-        #     mean_abs_diff = {f"{k}-mabs": np.mean(np.abs(diff[k]), axis=0) for k in diff.keys()}
-        #     corr_metrics = {**mean_abs_diff, **self.carlini_metrics}
-        #     job_plots.corr_heatmap(f"{job1_name}-{job2_name}-ex_mdiff", corr_metrics, corr_metrics)
-        #     job_plots.scatter(f"{job1_name}-{job2_name}-diff_mabs", diff, mean_abs_diff)
-        #     job_plots.scatter(f"{job1_name}-{job2_name}-ex_mdiff", self.carlini_metrics, mean_abs_diff)
+        job_plots, _, job_metrics, _, _, _ = self.get_cross_job_metrics()
+        for job1_name, job1_metrics, job2_name, job2_metrics in self.cross_job_iter(job_metrics):
+            # take difference between metrics, plot against job1
+            diff = {f"{k}-diff": job1_metrics[k] - job2_metrics[k] for k in job1_metrics.keys()}
+            job_plots.scatter(f"{job1_name}-{job2_name}-id_diff", job1_metrics, diff)
+            # average abs diff over replicates, plot against carlini metrics
+            mean_abs_diff = {f"{k}-mabs": np.mean(np.abs(diff[k]), axis=0) for k in diff.keys()}
+            corr_metrics = {**mean_abs_diff, **self.carlini_metrics}
+            job_plots.corr_heatmap(f"{job1_name}-{job2_name}-ex_mdiff", corr_metrics, corr_metrics)
+            job_plots.scatter(f"{job1_name}-{job2_name}-diff_mabs", diff, mean_abs_diff)
+            job_plots.scatter(f"{job1_name}-{job2_name}-ex_mdiff", self.carlini_metrics, mean_abs_diff)
 
     def plot_pca(self):
         # load metrics from each job

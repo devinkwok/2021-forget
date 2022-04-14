@@ -4,7 +4,7 @@ import numpy as np
 from torch.utils.data import DataLoader
 from forget.job import Job
 from forget.plot.plotter import Plotter
-from forget.metrics.transforms import moving_average, signed_prob, softmax
+from forget.metrics.transforms import signed_prob, softmax
 
 
 def evaluate_trained_model(job: Job):
@@ -21,13 +21,13 @@ def evaluate_trained_model(job: Job):
         train_s_prob[subdir] = job.cached(
             lambda: eval(model, train_data),
             subdir,
-            "all_train-signed_prob.pt",
+            f"all_train-signed_prob-ep{job.n_epochs}.pt",
             to_cpu=True,
         )
         test_s_prob[subdir] = job.cached(
             lambda: eval(model, test_data),
             subdir,
-            "all_test-signed_prob.pt",
+            f"all_test-signed_prob-ep{job.n_epochs}.pt",
             to_cpu=True,
         )
     plot_eval_acc(job, train_s_prob, "all-train-acc")

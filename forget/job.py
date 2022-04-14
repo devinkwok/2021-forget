@@ -20,6 +20,12 @@ HPARAMS = {
         "n_unique_labels": 10,
         "example_shape": (3, 32, 32),
     },
+    "CIFAR100": {
+        "n_train_examples": 50000,
+        "n_test_examples": 10000,
+        "n_unique_labels": 100,
+        "example_shape": (3, 32, 32),
+    },
 }
 
 
@@ -100,7 +106,7 @@ class Job:
             or model_type == "cifar_resnet_110"
         )
         _model_params = hparams.ModelHparams(model_type, "kaiming_uniform", "uniform")
-        model = registry.get(_model_params)
+        model = registry.get(_model_params, outputs=self.n_unique_labels)
         if state_dict is not None:
             model.load_state_dict(state_dict)
         if to_cuda:
@@ -133,7 +139,7 @@ class Job:
 
     def _get_dataset(self, train=True, start=0, end=-1, augment_data=False):
         dataset_name = self.hparams["dataset"]
-        if dataset_name == "CIFAR10":
+        if dataset_name == "CIFAR10" or dataset_name == "CIFAR100":
             transform = torchvision.transforms.Compose(
                 [
                     torchvision.transforms.ToTensor(),
@@ -150,12 +156,20 @@ class Job:
                         transform,
                     ]
                 )
-            dataset = datasets.CIFAR10(
-                self.data_dir,
-                train=train,
-                download=False,
-                transform=transform,
-            )
+            if dataset_name == "CIFAR10":
+                dataset = datasets.CIFAR10(
+                    self.data_dir,
+                    train=train,
+                    download=False,
+                    transform=transform,
+                )
+            elif dataset_name == "CIFAR100":
+                dataset = datasets.CIFAR100(
+                    self.data_dir,
+                    train=train,
+                    download=False,
+                    transform=transform,
+                )
         else:
             raise ValueError(f"'dataset'={dataset_name} is not defined.")
         if start == 0 and end <= 0:

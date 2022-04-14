@@ -37,8 +37,8 @@ class EvalMetrics(Metrics):
             "margin": margin,
             "loss": loss,
         }
-        for i in range(self.job.n_unique_labels):
-            metric_generators[f"logit_class{i}"] = get_output_vector_fn(i)
+        # for i in range(self.job.n_unique_labels):
+        #     metric_generators[f"logit_class{i}"] = get_output_vector_fn(i)
 
         self._gen_metrics(
             "eval", self.eval_logits(), metric_generators, do_plot_curves=False
